@@ -12,17 +12,77 @@
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
+![Tests](https://img.shields.io/badge/tests-44%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**NETRA_CLI** is a lightweight, zero-dependency command-line utility for developers, SREs, and DevOps teams to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression alerts.
+**NETRA_CLI** is a lightweight, zero-dependency developer and DevOps utility to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression issues. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
+
+Built entirely with Python's standard library—no `pip install` required to run.
+
+---
+
+## Visual Highlights
+
+### 1. Trivy-Style Security Audit (`netra check`)
+Instant endpoint inspection with objective security scoring, letter grades, and severity pills:
+
+```text
+  _   _ _____ _____ ____      _       ____ _     ___ 
+ | \ | | ____|_   _|  _ \    / \     / ___| |   |_ _|
+ |  \| |  _|   | | | |_) |  / _ \   | |   | |    | | 
+ | |\  | |___  | | |  _ <  / ___ \  | |___| |___ | | 
+ |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
+      Network & Endpoint Threat & Resilience Assessor
+
+ Target: https://github.com  |  Timestamp: 2026-11-02T18:21:30Z
+ Security Score: [████████████████████] 100/100  (GRADE: A+)
+
+┌─────────────────────────────┬────────────────┬────────────┬────────────────────────────────────────────────┐
+│ CONTROL                     │ STATUS         │ SEVERITY   │ DETAILS / VALUE                                │
+├─────────────────────────────┼────────────────┼────────────┼────────────────────────────────────────────────┤
+│ HTTP -> HTTPS Redirect      │ [   PASS   ]   │    INFO    │ HTTP 301 redirects to HTTPS: https://github... │
+│ TLS Certificate Validity    │ [   PASS   ]   │    INFO    │ Valid certificate (86 days left, expires 20... │
+│ Strict-Transport-Security   │ [ PRESENT  ]   │    INFO    │ max-age=31536000; includeSubdomains; preload   │
+│ Content-Security-Policy     │ [ PRESENT  ]   │    INFO    │ default-src 'none'; base-uri 'self'; child-... │
+│ X-Content-Type-Options      │ [ PRESENT  ]   │    INFO    │ nosniff                                        │
+│ Referrer-Policy             │ [ PRESENT  ]   │    INFO    │ origin-when-cross-origin, strict-origin-whe... │
+└─────────────────────────────┴────────────────┴────────────┴────────────────────────────────────────────────┘
+ Summary: 6 Passed, 0 Inconclusive, 0 Failed
+```
+
+### 2. btop-Style Interactive Dashboard (`netra top`)
+Real-time, interactive curses dashboard with dynamic countdown gauges, matrix health, and hotkey actions (`[r]` refresh, `[s]` lock baseline, `[q]` exit):
+
+```text
+┌─────────────────────────── NETRA LIVE MONITOR  ──  [Target: https://github.com] ───────────────────────────┐
+│ Security Score: [████████████████████] 100/100   GRADE: A+     Latency: 142ms          Audit: 18:21:30 UTC │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ TLS CERTIFICATE EXPIRATION GAUGE                                                                            │
+│ [████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 86 Days Remaining                                                   │
+│ Expires: 2027-01-27T23:59:59Z  |  Issuer: Sectigo Public Server CA                                          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ PERIMETER CONTROLS MATRIX                                                                                   │
+│     HTTP -> HTTPS Redirect:   [  PASS  ]  HTTP 301 redirects to HTTPS: https://github.com/                  │
+│     HSTS Protection:          [PRESENT ]  max-age=31536000; includeSubdomains; preload                      │
+│     CSP Hardening:            [PRESENT ]  default-src 'none'; base-uri 'self'; style-src 'unsafe-inline'    │
+│     nosniff Guard:            [PRESENT ]  nosniff                                                           │
+│     Referrer Policy:          [PRESENT ]  origin-when-cross-origin, strict-origin-when-cross-origin         │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ BASELINE DRIFT CONTRACT                                                                                     │
+│     ✔ BASELINE MATCH: Healthy contract (saved 2026-11-02T15:38:13)                                          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ HOTKEYS: [r] Refresh Now   [s] Save Baseline Snapshot   [q] Quit                                            │
+│ Live monitoring active (interval: 5.0s) | Press 'q' to quit                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## The Problem: Silent Security Degradation
 
 In modern development and deployment workflows, web security settings frequently degrade unnoticed:
-- A reverse proxy or CDN reload accidentally drops the `Strict-Transport-Security` (HSTS) header or weakens the `Content-Security-Policy` (CSP).
-- An ingress controller restart causes port 80 to stop redirecting HTTP traffic to HTTPS, exposing visitors to plaintext downgrade attacks.
+- A reverse proxy reload drops the `Strict-Transport-Security` (HSTS) header or weakens the `Content-Security-Policy` (CSP).
+- An ingress controller restart causes port 80 to stop redirecting HTTP traffic to HTTPS, exposing users to plaintext downgrade attacks.
 - A TLS certificate draws close to expiry or is renewed with unexpected attributes.
 
 ### Tooling Comparison Matrix
@@ -33,6 +93,7 @@ In modern development and deployment workflows, web security settings frequently
 | **Header Drift (HSTS, CSP, nosniff)** | ❌ Ignores headers | ⚠️ High false-positive noise | ✅ **Direct presence & RFC validation** |
 | **TLS Expiry Monitoring** | ⚠️ Basic ping | ⚠️ Heavy scheduled agent | ✅ **Calculates days & ignores renewals** |
 | **Execution Speed & Portability** | N/A (SaaS only) | Heavy binary / agents | ✅ **Sub-second, 0 external deps** |
+| **Interactive Terminal TUI** | ❌ No TUI | ❌ No TUI | ✅ **btop-style curses dashboard (`netra top`)** |
 | **Alerting Pipeline Safety** | Webhook spam | Email alert flood | ✅ **Swytchcode Execution Authority** |
 
 ---
@@ -41,95 +102,99 @@ In modern development and deployment workflows, web security settings frequently
 
 ### Security Baseline Lifecycle (Git Graph)
 
-```mermaid
-gitGraph
-    commit id: "Initial Check"
-    commit id: "Review Controls"
-    branch baseline
-    checkout baseline
-    commit id: "Save Baseline" tag: "baseline.json"
-    checkout main
-    commit id: "Server Deploy"
-    branch drift-analysis
-    checkout drift-analysis
-    commit id: "Compare Drift"
-    commit id: "Issue Preview"
-    checkout main
-    merge drift-analysis id: "Swytchcode Issue" tag: "Issue #1"
+NETRA treats web security posture like version-controlled source code. You lock in a known good baseline (`baseline save`), verify deployments against it (`compare`), and catch regressions before your users do:
+
+```text
+*   d4e7f9a (HEAD -> main) Dispatched Issue #1 via Swytchcode Kernel
+|\  
+| * c8b2a10 (drift-analysis) netra notify --confirm (github.issue.create)
+| * a7f3c21 netra compare --target https://example.com (5 regressions detected)
+| * 5e2d19b Server deploy / reverse proxy configuration reload
+|/  
+* 2b8f410 netra baseline save --target https://example.com (locked contract)
+* 1a9c042 netra check --target https://example.com (initial security audit)
 ```
 
-### Execution Flowchart
+### End-to-End Pipeline
 
-```mermaid
-flowchart TD
-    A["Target Website"] --> B["1. netra check"]
-    B --> C{"Review Baseline"}
-    C -->|Approved| D["2. netra baseline save"]
-    D --> E["Server Config Reload"]
-    E --> F["3. netra compare"]
-    F --> G{"Drift Detected?"}
-    G -->|No Drift| H["Match (Healthy)"]
-    G -->|Regressions| I["4. netra notify"]
-    I --> J{"Confirm Flag?"}
-    J -->|No| K["Safe Preview"]
-    J -->|Yes| L["5. Swytchcode Kernel"]
-    L --> M["GitHub Issue Created"]
+```text
+  ┌───────────────────────────────────┐
+  │ 1. Target Website                 │
+  │    (https://example.com)          │
+  └─────────────────┬─────────────────┘
+                    │
+                    ▼
+  ┌───────────────────────────────────┐
+  │ 2. Audit: netra check / netra top │ ──▶ Trivy table & btop-style live dashboard
+  └─────────────────┬─────────────────┘
+                    │
+                    ▼
+  ┌───────────────────────────────────┐
+  │ 3. Lock: netra baseline save      │ ──▶ Snapshot persisted to .netra/baselines/
+  └─────────────────┬─────────────────┘
+                    │
+                    ▼
+  ┌───────────────────────────────────┐
+  │ [Server Deploy / Proxy Reload]    │ ──▶ Operational changes occur
+  └─────────────────┬─────────────────┘
+                    │
+                    ▼
+  ┌───────────────────────────────────┐
+  │ 4. Verify: netra compare          │
+  └─────────────────┬─────────────────┘
+                    ├─────────────────────────────────────────────┐
+          [No Drift Detected]                             [Regressions Found]
+                    │                                             │
+                    ▼                                             ▼
+  ┌───────────────────────────────────┐         ┌───────────────────────────────────┐
+  │ ✔ Exit 0 (Contract Intact)        │         │ ▲ Exit 1: netra notify            │
+  └───────────────────────────────────┘         └─────────────────┬─────────────────┘
+                                                                  │
+                                                                  ▼
+                                                ┌───────────────────────────────────┐
+                                                │ 5. Safe Markdown Preview Mode     │ (Zero external calls)
+                                                └─────────────────┬─────────────────┘
+                                                                  │
+                                                                  ▼
+                                                ┌───────────────────────────────────┐
+                                                │ 6. Swytchcode Execution Kernel    │ (--confirm passed)
+                                                │    (github.issue.create)          │
+                                                └─────────────────┬─────────────────┘
+                                                                  │
+                                                                  ▼
+                                                ┌───────────────────────────────────┐
+                                                │ 🚀 Live GitHub Issue Created      │ (No hardcoded secrets)
+                                                └───────────────────────────────────┘
 ```
-
----
-
-## Key Features
-
-- **Zero External Dependencies:** Built entirely with Python's standard library (`urllib`, `ssl`, `socket`, `argparse`, `json`, `subprocess`). Runs out-of-the-box anywhere Python 3 is installed.
-- **Human-Reviewed Baselines:** Capture an intentional snapshot of verified security controls (`baseline save`) to establish your security contract.
-- **Intelligent Drift Detection:** Flags genuine security regressions (e.g., removed headers or expired certificates) while ignoring routine operational modifications (such as certificate renewals).
-- **Execution Authority via Swytchcode:** Rather than scattering raw GitHub API tokens across scripts or environment variables, NETRA delegates issue dispatching to [Swytchcode](https://swytchcode.com)'s local execution kernel. You get safe previews by default, least-privilege guardrails, and zero credential sprawl.
-- **CI/CD & Scripting Ready:** Produces human-readable terminal tables or clean, structured JSON (`--json`) for automation pipelines.
-
----
-
-## Monitored Security Controls
-
-| Control | Verification Method | Status Values | Severity on Regression |
-|---|---|---|---|
-| **HTTP → HTTPS Redirect** | Plaintext HTTP (port 80) connection testing for permanent 301/308 redirect | `pass`, `fail`, `inconclusive` | **MEDIUM** |
-| **TLS Certificate Validity** | Direct `ssl` handshake extracting `notAfter` timestamp and calculating remaining validity | `pass`, `fail`, `inconclusive` | **HIGH** (if expired) |
-| **Strict-Transport-Security (HSTS)** | Inspects header and validates directives according to RFC 6797 (`max-age=0` fails) | `present`, `missing`, `inconclusive` | **MEDIUM** |
-| **Content-Security-Policy (CSP)** | Checks header presence and asserts non-empty configuration | `present`, `missing`, `inconclusive` | **MEDIUM** |
-| **X-Content-Type-Options** | Enforces the strict `nosniff` header value | `present`, `missing`, `inconclusive` | **LOW** |
-| **Referrer-Policy** | Checks header presence and policy definition | `present`, `missing`, `inconclusive` | **LOW** |
-
-> [!TIP]
-> **Resilience Guarantee:** Network timeouts, unreachable ports, or DNS failures cleanly report `inconclusive` with a diagnostic reason—never a false `missing` or unexpected crash. Unverified SSL fallback ensures HTTP security headers can still be inspected even if a target's certificate is untrusted or expired.
 
 ---
 
 ## Architecture: Why Swytchcode?
 
-Traditional notification scripts require generating personal access tokens (PATs), hardcoding credentials into environment files, and writing custom retry logic.
+Traditional alerting scripts require generating personal access tokens (PATs), hardcoding credentials into environment files, and writing custom retry logic.
 
 NETRA uses **Swytchcode** as an *Execution Authority Kernel*:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as Developer / CI
-    participant Netra as NETRA CLI
-    participant Kernel as Swytchcode Kernel
-    participant Contract as Wrekenfile Schema
-    participant Vault as OAuth Session
-    participant GitHub as GitHub REST API
-
-    Dev->>Netra: netra notify with confirm
-    Netra->>Kernel: Pipe JSON payload via stdin
-    Kernel->>Contract: Validate parameter schema locally
-    Contract-->>Kernel: Schema verified
-    Kernel->>Vault: Retrieve active OAuth credentials
-    Vault-->>Kernel: In-flight Bearer token
-    Kernel->>GitHub: POST issue to repository
-    GitHub-->>Kernel: 201 Created with issue URL
-    Kernel-->>Netra: Structured JSON response
-    Netra->>Dev: Issue created successfully
+```text
+Developer / CI               NETRA_CLI (netra.py)          Swytchcode Kernel (swy exec)        GitHub REST API
+     │                               │                                     │                          │
+     │ 1. netra notify --confirm     │                                     │                          │
+     ├──────────────────────────────▶│                                     │                          │
+     │                               │ 2. Pipe JSON payload via stdin      │                          │
+     │                               ├────────────────────────────────────▶│                          │
+     │                               │                                     │ 3. Validate Wrekenfile   │
+     │                               │                                     │    & inject OAuth token  │
+     │                               │                                     ├──────────┐               │
+     │                               │                                     │          │               │
+     │                               │                                     │◀─────────┘               │
+     │                               │                                     │ 4. POST /repos/issues    │
+     │                               │                                     ├─────────────────────────▶│
+     │                               │                                     │ 5. 201 Created (Issue URL│
+     │                               │                                     │◀─────────────────────────┤
+     │                               │ 6. Structured JSON Result           │                          │
+     │                               │◀────────────────────────────────────┤                          │
+     │ 7. ✔ Live Issue #1 Published  │                                     │                          │
+     │◀──────────────────────────────┤                                     │                          │
 ```
 
 ### The 5 Architectural Advantages:
@@ -144,13 +209,26 @@ sequenceDiagram
 
 ## Installation & Quickstart
 
-Clone the repository and run directly:
+### Method A: Install via Pip (Recommended for Global CLI Usage)
 
 ```bash
 git clone https://github.com/404Avinash/Netra_cli.git
 cd Netra_cli
 
-# Run help
+# Editable pip install into your environment
+pip install -e .
+
+# Run netra from anywhere
+netra --help
+```
+
+### Method B: Standalone Portable Mode (Zero Installation)
+
+NETRA runs out-of-the-box anywhere Python 3.10+ is installed:
+
+```bash
+git clone https://github.com/404Avinash/Netra_cli.git
+cd Netra_cli
 python3 netra.py --help
 ```
 
@@ -158,87 +236,71 @@ python3 netra.py --help
 
 ## Usage Guide
 
-### 1. Inspect an Endpoint (`netra check`)
+### 1. Instant Security Audit (`netra check`)
 
-Inspect a single target URL and print a formatted summary:
+Inspect an endpoint with formatted Trivy-style table output:
 
 ```bash
-python3 netra.py check --target https://github.com
-```
-
-**Terminal Output:**
-```text
-NETRA Security Assessment for https://github.com
-Observation Timestamp: 2026-11-02T15:38:02Z
-==============================================================================
-Control                      | Status          | Details / Value
-------------------------------------------------------------------------------
-HTTP -> HTTPS Redirect       | [PASS]          | HTTP 301 redirects to HTTPS: https://github.com/
-TLS Certificate Validity     | [PASS]          | Valid certificate (86 days left, expires 2027-01-27T23:59:59Z, issuer: Sectigo Limited)
-Strict-Transport-Security    | [PRESENT]       | max-age=31536000; includeSubdomains; preload
-Content-Security-Policy      | [PRESENT]       | default-src 'none'; base-uri 'self'; ...
-X-Content-Type-Options       | [PRESENT]       | nosniff
-Referrer-Policy              | [PRESENT]       | origin-when-cross-origin, strict-origin-when-cross-origin
-==============================================================================
+netra check --target https://github.com
 ```
 
 For scripts and CI pipelines, use `--json`:
 ```bash
-python3 netra.py check --target https://github.com --json
+netra check --target https://github.com --json
 ```
 
 ---
 
-### 2. Save a Reviewed Baseline (`netra baseline save`)
+### 2. Live Terminal Monitoring Dashboard (`netra top`)
 
-Save the current observation as the authoritative benchmark for future comparisons:
+Launch an interactive, btop-style monitoring dashboard:
 
 ```bash
-python3 netra.py baseline save --target https://github.com --yes
-# ✔ Baseline saved successfully to baselines/github.com.json
+netra top --target https://github.com
+# or alias:
+netra monitor --target https://github.com --interval 3.0
+```
+
+**Interactive Hotkeys:**
+- `[r]`: Force an immediate fresh network audit
+- `[s]`: Save current security posture as baseline snapshot
+- `[q]`: Exit dashboard cleanly
+
+---
+
+### 3. Save a Reviewed Baseline (`netra baseline save`)
+
+Lock the current posture as the authoritative benchmark:
+
+```bash
+netra baseline save --target https://example.com --yes
+# ✔ Baseline saved successfully to .netra/baselines/example.com.json
 ```
 
 ---
 
-### 3. Compare Live Endpoint to Baseline (`netra compare`)
+### 4. Detect Drift & Regressions (`netra compare`)
 
-Detect whether current controls match the established baseline:
+Compare live security posture against your saved baseline:
 
 ```bash
-python3 netra.py compare --target https://github.com
-```
-
-**Output when configurations match:**
-```text
-NETRA Drift Analysis for https://github.com
-Baseline Saved: 2026-11-02T15:38:13Z | Current Time: 2026-11-02T15:38:13Z
-======================================================================================
-Control                    | Baseline   | Current    | Status     | Severity
---------------------------------------------------------------------------------------
-HTTP->HTTPS Redirect       | pass       | pass       | MATCH      | -       
-TLS Certificate Validity   | pass       | pass       | MATCH      | -       
-Strict-Transport-Security  | present    | present    | MATCH      | -       
-Content-Security-Policy    | present    | present    | MATCH      | -       
-X-Content-Type-Options     | present    | present    | MATCH      | -       
-Referrer-Policy            | present    | present    | MATCH      | -       
-======================================================================================
-
-✔ No security drift detected. All controls match or exceed baseline.
+netra compare --target https://example.com
 ```
 
 **Output when regressions are detected (exits with code `1`):**
 ```text
-======================================================================================
-Control                    | Baseline   | Current    | Status     | Severity
---------------------------------------------------------------------------------------
-HTTP->HTTPS Redirect       | pass       | fail       | DRIFT      | MEDIUM  
-Strict-Transport-Security  | present    | missing    | DRIFT      | MEDIUM  
-Content-Security-Policy    | present    | missing    | DRIFT      | MEDIUM  
-X-Content-Type-Options     | present    | missing    | DRIFT      | LOW     
-Referrer-Policy            | present    | missing    | DRIFT      | LOW     
-======================================================================================
+┌─────────────────────────────┬────────────┬────────────┬────────────┬──────────┐
+│ CONTROL                     │ BASELINE   │ CURRENT    │ STATUS     │ SEVERITY │
+├─────────────────────────────┼────────────┼────────────┼────────────┼──────────┤
+│ HTTP->HTTPS Redirect        │ pass       │ fail       │ DRIFT      │ MEDIUM   │
+│ TLS Certificate Validity    │ pass       │ pass       │ MATCH      │ -        │
+│ Strict-Transport-Security   │ present    │ missing    │ DRIFT      │ MEDIUM   │
+│ Content-Security-Policy     │ present    │ missing    │ DRIFT      │ MEDIUM   │
+│ X-Content-Type-Options      │ present    │ missing    │ DRIFT      │ LOW      │
+│ Referrer-Policy             │ present    │ missing    │ DRIFT      │ LOW      │
+└─────────────────────────────┴────────────┴────────────┴────────────┴──────────┘
 
-⚠ DRIFT DETECTED: 5 security regression(s) identified!
+▲ DRIFT DETECTED: 5 security regression(s) identified!
 
 Recommended Actions:
   1. [MEDIUM] HTTP->HTTPS Redirect: Enforce permanent 301/308 redirect from HTTP to HTTPS on port 80.
@@ -250,40 +312,54 @@ Recommended Actions:
 
 ---
 
-### 4. Create Issue via Swytchcode Execution Authority (`netra notify`)
+### 5. Safe Alert Dispatch via Swytchcode (`netra notify`)
 
-When regressions occur, NETRA can file a GitHub issue directly in your tracking repository.
+When regressions occur, file a GitHub issue directly in your tracking repository without hardcoding API secrets.
 
 #### Safe Preview Mode (Default)
-Running without `--confirm` displays a full markdown preview without making any network calls:
+Running without `--confirm` displays a full markdown preview with **zero external network calls**:
 
 ```bash
-python3 netra.py notify --target https://example.com --repo 404Avinash/Netra_cli
+netra notify --target https://example.com --repo 404Avinash/Netra_cli
 ```
 
 #### Confirmed Dispatch
-Pass `--confirm` to dispatch the issue:
+Pass `--confirm` to route the dispatch through Swytchcode's kernel:
 
 ```bash
-python3 netra.py notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
-# Output: ✔ Issue created successfully via Swytchcode!
+netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
+# ✔ Issue created successfully via Swytchcode!
+# Issue URL: https://github.com/404Avinash/Netra_cli/issues/1
 ```
 
 > [!NOTE]
-> **Live Demonstration:** Inspect an issue created live by NETRA_CLI via Swytchcode at [GitHub Issue #1](https://github.com/404Avinash/Netra_cli/issues/1).
+> **Live Demonstration:** Inspect a real issue created live by NETRA_CLI via Swytchcode at [GitHub Issue #1](https://github.com/404Avinash/Netra_cli/issues/1).
+
+---
+
+## Monitored Security Controls
+
+| Control | Verification Method | Status Values | Severity on Regression | Weight |
+|---|---|---|---|---|
+| **HTTP → HTTPS Redirect** | Plaintext HTTP (port 80) connection testing for permanent 301/308 redirect | `pass`, `fail`, `inconclusive` | **MEDIUM** | 25 pts |
+| **TLS Certificate Validity** | Direct `ssl` handshake extracting `notAfter` timestamp and calculating remaining validity | `pass`, `fail`, `inconclusive` | **HIGH** (if expired) | 25 pts |
+| **Strict-Transport-Security (HSTS)** | Inspects header and validates directives according to RFC 6797 (`max-age=0` fails) | `present`, `missing`, `inconclusive` | **MEDIUM** | 20 pts |
+| **Content-Security-Policy (CSP)** | Checks header presence and asserts non-empty configuration | `present`, `missing`, `inconclusive` | **MEDIUM** | 15 pts |
+| **X-Content-Type-Options** | Enforces the strict `nosniff` header value | `present`, `missing`, `inconclusive` | **LOW** | 10 pts |
+| **Referrer-Policy** | Checks header presence and policy definition | `present`, `missing`, `inconclusive` | **LOW** | 5 pts |
 
 ---
 
 ## Test Suite
 
-NETRA includes a zero-dependency test suite mocking all network layers (`socket`, `ssl`, and HTTP):
+NETRA includes a comprehensive zero-dependency test suite mocking all network layers (`socket`, `ssl`, and HTTP):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
 ```text
-Ran 39 tests in 0.118s
+Ran 44 tests in 0.112s
 
 OK
 ```
@@ -292,10 +368,12 @@ OK
 
 ## Continuous Integration
 
-Every commit and pull request is automatically verified across Python 3.10, 3.11, and 3.12 via GitHub Actions. See the live build status in [GitHub Actions](https://github.com/404Avinash/Netra_cli/actions).
+Every commit and pull request is automatically tested across Python 3.10, 3.11, and 3.12 via GitHub Actions.
+
+See live build results in [GitHub Actions](https://github.com/404Avinash/Netra_cli/actions).
 
 ---
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).

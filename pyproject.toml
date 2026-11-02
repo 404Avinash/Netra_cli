@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netra-cli"
+version = "1.0.0"
+description = "Network & Endpoint Threat and Resilience Assessor CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Avinash", email = "avinash1807007@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+
+[project.scripts]
+netra = "netra:main"
+
+[project.urls]
+Homepage = "https://github.com/404Avinash/Netra_cli"
+Repository = "https://github.com/404Avinash/Netra_cli.git"
+Issues = "https://github.com/404Avinash/Netra_cli/issues"
+
+[tool.setuptools]
+py-modules = ["netra"]
+
+

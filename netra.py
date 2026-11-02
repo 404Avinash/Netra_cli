@@ -17,6 +17,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,6 +86,88 @@ def pad_ansi(text: str, width: int, align: str = "left") -> str:
     if align == "right":
         return (" " * padding) + text
     return text + (" " * padding)
+
+
+BANNER = r"""
+  _   _ _____ _____ ____      _       ____ _     ___ 
+ | \ | | ____|_   _|  _ \    / \     / ___| |   |_ _|
+ |  \| |  _|   | | | |_) |  / _ \   | |   | |    | | 
+ | |\  | |___  | | |  _ <  / ___ \  | |___| |___ | | 
+ |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
+      Network & Endpoint Threat & Resilience Assessor
+"""
+
+
+def calculate_security_score(obs: dict) -> tuple[int, str, str]:
+    """
+    Calculate an objective 0-100 security score, letter grade, and progress meter.
+    Weights:
+      - HTTP->HTTPS Redirect: 25 pts
+      - TLS Certificate Validity: 25 pts
+      - Strict-Transport-Security (HSTS): 20 pts
+      - Content-Security-Policy (CSP): 15 pts
+      - X-Content-Type-Options: 10 pts
+      - Referrer-Policy: 5 pts
+    """
+    score = 0
+    # Redirect (25 pts)
+    r_st = obs.get("redirect", {}).get("status")
+    if r_st == "pass":
+        score += 25
+    elif r_st == "inconclusive":
+        score += 10
+
+    # TLS (25 pts)
+    t_st = obs.get("tls", {}).get("status")
+    if t_st == "pass":
+        score += 25
+    elif t_st == "inconclusive":
+        score += 10
+
+    # Headers (50 pts total)
+    hdrs = obs.get("headers", {})
+    hsts_st = hdrs.get("Strict-Transport-Security", {}).get("status")
+    if hsts_st == "present":
+        score += 20
+    elif hsts_st == "inconclusive":
+        score += 10
+
+    csp_st = hdrs.get("Content-Security-Policy", {}).get("status")
+    if csp_st == "present":
+        score += 15
+    elif csp_st == "inconclusive":
+        score += 7
+
+    xcto_st = hdrs.get("X-Content-Type-Options", {}).get("status")
+    if xcto_st == "present":
+        score += 10
+    elif xcto_st == "inconclusive":
+        score += 5
+
+    ref_st = hdrs.get("Referrer-Policy", {}).get("status")
+    if ref_st == "present":
+        score += 5
+    elif ref_st == "inconclusive":
+        score += 2
+
+    # Grade scale
+    if score >= 95:
+        grade = "A+"
+    elif score >= 85:
+        grade = "A"
+    elif score >= 75:
+        grade = "B"
+    elif score >= 60:
+        grade = "C"
+    else:
+        grade = "F"
+
+    # 20-character progress bar
+    bar_width = 20
+    filled = int(round((score / 100.0) * bar_width))
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    return score, grade, bar
 
 
 
@@ -631,52 +714,87 @@ def compare_drift(baseline: dict, live: dict) -> dict:
 
 # Output Formatting Helpers
 def format_observation_table(obs: dict) -> str:
-    """Format observation dictionary as an ASCII table."""
+    """Format observation dictionary as a Trivy-style Unicode box table."""
+    score, grade, bar = calculate_security_score(obs)
+    grade_color = ANSI_GREEN + ANSI_BOLD if grade in ("A+", "A") else (ANSI_CYAN if grade == "B" else (ANSI_YELLOW if grade == "C" else ANSI_RED + ANSI_BOLD))
+    colored_grade = color_text(f"GRADE: {grade}", grade_color)
+    score_bar_colored = color_text(bar, ANSI_GREEN if score >= 85 else (ANSI_CYAN if score >= 75 else (ANSI_YELLOW if score >= 60 else ANSI_RED)))
+
     lines = []
-    lines.append(color_text(f"NETRA Security Assessment for {obs['target']}", ANSI_BOLD))
-    lines.append(f"Observation Timestamp: {obs['timestamp']}")
-    lines.append("=" * 78)
-    lines.append(f"{'Control':<28} | {'Status':<15} | Details / Value")
-    lines.append("-" * 78)
+    lines.append(color_text(BANNER.strip(), ANSI_CYAN))
+    lines.append("")
+    lines.append(f" Target: {color_text(obs['target'], ANSI_BOLD)}  |  Timestamp: {obs['timestamp']}")
+    lines.append(f" Security Score: [{score_bar_colored}] {color_text(f'{score}/100', ANSI_BOLD)}  ({colored_grade})")
+    lines.append("")
 
-    # Redirect
+    lines.append("┌" + "─" * 29 + "┬" + "─" * 16 + "┬" + "─" * 12 + "┬" + "─" * 48 + "┐")
+    lines.append(f"│ {'CONTROL':<27} │ {'STATUS':<14} │ {'SEVERITY':<10} │ {'DETAILS / VALUE':<46} │")
+    lines.append("├" + "─" * 29 + "┼" + "─" * 16 + "┼" + "─" * 12 + "┼" + "─" * 48 + "┤")
+
+    pass_count = 0
+    warn_count = 0
+    fail_count = 0
+
+    def add_row(ctrl: str, status: str, sev: str, details: str):
+        nonlocal pass_count, warn_count, fail_count
+        st_lower = status.lower()
+        if st_lower in ("pass", "present"):
+            pass_count += 1
+            badge = color_text(f"[ {status.upper():^8} ]", ANSI_GREEN + ANSI_BOLD)
+            sev_badge = color_text(f"{sev:^10}", ANSI_BLUE)
+        elif st_lower in ("inconclusive", "warning"):
+            warn_count += 1
+            badge = color_text(f"[ {status.upper():^8} ]", ANSI_YELLOW + ANSI_BOLD)
+            sev_badge = color_text(f"{sev:^10}", ANSI_YELLOW + ANSI_BOLD)
+        else:
+            fail_count += 1
+            badge = color_text(f"[ {status.upper():^8} ]", ANSI_RED + ANSI_BOLD)
+            sev_badge = color_text(f"{sev:^10}", ANSI_RED + ANSI_BOLD)
+
+        det = details if len(details) <= 46 else details[:43] + "..."
+        lines.append(f"│ {ctrl:<27} │ {pad_ansi(badge, 14)} │ {pad_ansi(sev_badge, 10)} │ {det:<46} │")
+
+    # 1. Redirect
     red = obs.get("redirect", {})
-    b_red = pad_ansi(status_badge(red.get("status", "unknown")), 15)
-    lines.append(f"{'HTTP -> HTTPS Redirect':<28} | {b_red} | {red.get('details', '')}")
+    add_row("HTTP -> HTTPS Redirect", red.get("status", "unknown"), "INFO" if red.get("status") == "pass" else "MEDIUM", red.get("details", ""))
 
-    # TLS
+    # 2. TLS
     tls = obs.get("tls", {})
-    b_tls = pad_ansi(status_badge(tls.get("status", "unknown")), 15)
-    lines.append(f"{'TLS Certificate Validity':<28} | {b_tls} | {tls.get('details', '')}")
+    add_row("TLS Certificate Validity", tls.get("status", "unknown"), "INFO" if tls.get("status") == "pass" else "HIGH", tls.get("details", ""))
 
-    # Headers
+    # 3. Headers
     hdrs = obs.get("headers", {})
-    for hdr_name, hdr_data in hdrs.items():
-        st = hdr_data.get("status", "unknown")
-        b_hdr = pad_ansi(status_badge(st), 15)
-        val = hdr_data.get("value") or hdr_data.get("error") or "None"
-        if hdr_data.get("details"):
-            val = f"{val} ({hdr_data['details']})"
-        lines.append(f"{hdr_name:<28} | {b_hdr} | {val}")
+    for h, (label, def_sev) in [
+        ("Strict-Transport-Security", ("Strict-Transport-Security", "MEDIUM")),
+        ("Content-Security-Policy", ("Content-Security-Policy", "MEDIUM")),
+        ("X-Content-Type-Options", ("X-Content-Type-Options", "LOW")),
+        ("Referrer-Policy", ("Referrer-Policy", "LOW")),
+    ]:
+        h_data = hdrs.get(h, {})
+        st = h_data.get("status", "unknown")
+        val = h_data.get("value") or h_data.get("error") or "Missing / Not Configured"
+        add_row(label, st, "INFO" if st == "present" else def_sev, val)
 
-    lines.append("=" * 78)
+    lines.append("└" + "─" * 29 + "┴" + "─" * 16 + "┴" + "─" * 12 + "┴" + "─" * 48 + "┘")
+    lines.append(f" Summary: {color_text(f'{pass_count} Passed', ANSI_GREEN)}, {color_text(f'{warn_count} Inconclusive', ANSI_YELLOW)}, {color_text(f'{fail_count} Failed', ANSI_RED if fail_count > 0 else ANSI_GREEN)}")
     return "\n".join(lines)
 
 
 def format_compare_table(diff: dict) -> str:
-    """Format drift comparison result as an ASCII table."""
+    """Format drift comparison result as a Trivy-style Unicode box table."""
     lines = []
     target = diff["target"]
     base_saved = diff["baseline"].get("saved_at", "Unknown")
-    lines.append(color_text(f"NETRA Drift Analysis for {target}", ANSI_BOLD))
-    lines.append(f"Baseline Saved: {base_saved} | Current Time: {diff['live'].get('timestamp')}")
-    lines.append("=" * 86)
-    lines.append(
-        f"{'Control':<26} | {'Baseline':<10} | {'Current':<10} | {'Status':<10} | Severity"
-    )
-    lines.append("-" * 86)
+    lines.append(color_text(BANNER.strip(), ANSI_CYAN))
+    lines.append("")
+    lines.append(f" Target: {color_text(target, ANSI_BOLD)}")
+    lines.append(f" Baseline Saved: {base_saved}  |  Current Time: {diff['live'].get('timestamp')}")
+    lines.append("")
 
-    # Track controls and check regression presence
+    lines.append("┌" + "─" * 29 + "┬" + "─" * 12 + "┬" + "─" * 12 + "┬" + "─" * 12 + "┬" + "─" * 10 + "┐")
+    lines.append(f"│ {'CONTROL':<27} │ {'BASELINE':<10} │ {'CURRENT':<10} │ {'STATUS':<10} │ {'SEVERITY':<8} │")
+    lines.append("├" + "─" * 29 + "┼" + "─" * 12 + "┼" + "─" * 12 + "┼" + "─" * 12 + "┼" + "─" * 10 + "┤")
+
     reg_map = {r["control"]: r for r in diff["regressions"]}
 
     controls_to_show = [
@@ -697,9 +815,9 @@ def format_compare_table(diff: dict) -> str:
         else:
             st_text = pad_ansi(color_text("MATCH", ANSI_GREEN), 10)
             sev_text = pad_ansi("-", 8)
-        lines.append(f"{ctrl:<26} | {str(b_st):<10} | {str(l_st):<10} | {st_text} | {sev_text}")
+        lines.append(f"│ {ctrl:<27} │ {str(b_st):<10} │ {str(l_st):<10} │ {st_text} │ {sev_text} │")
 
-    lines.append("=" * 86)
+    lines.append("└" + "─" * 29 + "┴" + "─" * 12 + "┴" + "─" * 12 + "┴" + "─" * 12 + "┴" + "─" * 10 + "┘")
 
     if diff["drift_detected"]:
         lines.append(
@@ -943,6 +1061,253 @@ def handle_notify(args) -> int:
     return dispatch_swytchcode_issue(owner, repo, title, body)
 
 
+def run_top_dashboard(target: str, interval: float = 5.0, timeout: float = 10.0) -> int:
+    """
+    Launch interactive btop-style curses terminal monitoring dashboard.
+    Zero external dependencies, uses standard library curses.
+    """
+    if not sys.stdin.isatty():
+        sys.stderr.write("Error: 'top' dashboard requires an interactive terminal (TTY).\n")
+        return 1
+
+    try:
+        import curses
+    except ImportError:
+        sys.stderr.write(
+            "Error: 'curses' module not available. "
+            "Built-in on Linux/macOS. On Windows, install 'windows-curses'.\n"
+        )
+        return 1
+
+    def curses_main(stdscr):
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+
+        stdscr.nodelay(True)
+        stdscr.timeout(500)
+        if curses.has_colors():
+            curses.start_color()
+            try:
+                curses.use_default_colors()
+            except curses.error:
+                pass
+            curses.init_pair(1, curses.COLOR_GREEN, -1)
+            curses.init_pair(2, curses.COLOR_RED, -1)
+            curses.init_pair(3, curses.COLOR_YELLOW, -1)
+            curses.init_pair(4, curses.COLOR_CYAN, -1)
+            curses.init_pair(5, curses.COLOR_BLUE, -1)
+
+            col_pass = curses.color_pair(1) | curses.A_BOLD
+            col_fail = curses.color_pair(2) | curses.A_BOLD
+            col_warn = curses.color_pair(3) | curses.A_BOLD
+            col_cyan = curses.color_pair(4) | curses.A_BOLD
+            col_blue = curses.color_pair(5)
+        else:
+            col_pass = curses.A_BOLD
+            col_fail = curses.A_BOLD
+            col_warn = curses.A_NORMAL
+            col_cyan = curses.A_BOLD
+            col_blue = curses.A_NORMAL
+
+        last_poll = 0.0
+        obs = None
+        latency_ms = 0
+        diff = None
+        status_msg = f"Live monitoring active (Refresh every {interval:.1f}s) | Press 'q' to quit"
+        status_msg_time = time.time()
+
+        while True:
+            now = time.time()
+            if obs is None or (now - last_poll >= interval):
+                last_poll = now
+                t0 = time.time()
+                try:
+                    obs = observe(target, timeout=timeout)
+                    latency_ms = int((time.time() - t0) * 1000)
+
+                    filepath = get_baseline_filepath(target)
+                    if filepath.exists():
+                        try:
+                            baseline = load_baseline(filepath)
+                            diff = compare_drift(baseline, obs)
+                        except Exception:
+                            diff = None
+                    else:
+                        diff = None
+                except Exception as e:
+                    obs = {
+                        "error": str(e),
+                        "target": target,
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    }
+                    diff = None
+
+            max_y, max_x = stdscr.getmaxyx()
+            stdscr.erase()
+
+            if max_y < 22 or max_x < 76:
+                msg = f"Terminal size too small ({max_x}x{max_y}). Expand window to at least 76x22."
+                try:
+                    stdscr.addstr(0, 0, msg[:max_x - 1], col_warn)
+                except curses.error:
+                    pass
+            else:
+                def draw(y, x, text, attr=0):
+                    if 0 <= y < max_y and 0 <= x < max_x:
+                        avail = max_x - 1 - x
+                        if avail > 0:
+                            try:
+                                stdscr.addstr(y, x, text[:avail], attr)
+                            except curses.error:
+                                pass
+
+                # Draw top border
+                draw(0, 0, "┌" + "─" * (max_x - 2) + "┐")
+                title_bar = f" NETRA LIVE MONITOR  ──  [Target: {target}] "
+                draw(0, 4, title_bar, col_cyan)
+
+                # Row 2: Target info & Score
+                if "error" in obs:
+                    draw(2, 2, f"Error inspecting target: {obs['error']}", col_fail)
+                else:
+                    score, grade, bar = calculate_security_score(obs)
+                    grade_color = col_pass if grade in ("A+", "A") else (col_cyan if grade == "B" else (col_warn if grade == "C" else col_fail))
+                    draw(2, 2, f"Security Score: [{bar}] {score}/100", curses.A_BOLD)
+                    draw(2, 44, f"GRADE: {grade}", grade_color)
+                    draw(2, 58, f"Latency: {latency_ms}ms", col_blue)
+                    ts_str = obs.get("timestamp", "")
+                    time_part = ts_str[11:19] if len(ts_str) >= 19 else ts_str
+                    draw(2, max_x - 22, f"Audit: {time_part} UTC")
+
+                # Section divider
+                draw(3, 0, "├" + "─" * (max_x - 2) + "┤")
+
+                # TLS Certificate panel
+                draw(4, 2, "TLS CERTIFICATE EXPIRATION GAUGE", col_cyan)
+                tls = obs.get("tls", {}) if "error" not in obs else {}
+                days = tls.get("days_left")
+                exp_date = tls.get("not_after", "Unknown")
+                if days is not None:
+                    gauge_len = 36
+                    ratio = min(max(days, 0), 365) / 365.0
+                    filled = int(round(ratio * gauge_len))
+                    g_bar = "█" * filled + "░" * (gauge_len - filled)
+                    g_col = col_pass if days > 30 else (col_warn if days > 14 else col_fail)
+                    draw(5, 2, f"[{g_bar}] {days} Days Remaining", g_col)
+                    issuer_str = str(tls.get("issuer", "Unknown"))
+                    draw(6, 2, f"Expires: {exp_date}  |  Issuer: {issuer_str[:35]}")
+                else:
+                    draw(5, 2, f"TLS Status: {tls.get('status', 'unknown').upper()} - {tls.get('details', '')}", col_warn)
+
+                # Section divider
+                draw(7, 0, "├" + "─" * (max_x - 2) + "┤")
+
+                # Perimeter Controls Matrix
+                draw(8, 2, "PERIMETER CONTROLS MATRIX", col_cyan)
+
+                red = obs.get("redirect", {}) if "error" not in obs else {}
+                red_st = red.get("status", "unknown")
+                red_col = col_pass if red_st == "pass" else (col_warn if red_st == "inconclusive" else col_fail)
+                draw(10, 4, f"{'HTTP -> HTTPS Redirect:':<25}")
+                draw(10, 30, f"[{red_st.upper():^8}]", red_col)
+                draw(10, 42, str(red.get("details", ""))[:max_x - 44])
+
+                hdrs = obs.get("headers", {}) if "error" not in obs else {}
+                controls = [
+                    ("Strict-Transport-Security", "HSTS Protection:"),
+                    ("Content-Security-Policy", "CSP Hardening:"),
+                    ("X-Content-Type-Options", "nosniff Guard:"),
+                    ("Referrer-Policy", "Referrer Policy:"),
+                ]
+
+                row_idx = 11
+                for h_name, label in controls:
+                    h_data = hdrs.get(h_name, {})
+                    st = h_data.get("status", "unknown")
+                    st_col = col_pass if st == "present" else (col_warn if st == "inconclusive" else col_fail)
+                    val = h_data.get("value") or h_data.get("error") or "Missing / Not Configured"
+                    draw(row_idx, 4, f"{label:<25}")
+                    draw(row_idx, 30, f"[{st.upper():^8}]", st_col)
+                    draw(row_idx, 42, str(val)[:max_x - 44])
+                    row_idx += 1
+
+                # Section divider
+                draw(16, 0, "├" + "─" * (max_x - 2) + "┤")
+
+                # Baseline status panel
+                draw(17, 2, "BASELINE DRIFT CONTRACT", col_cyan)
+                if diff is None:
+                    draw(18, 4, "No baseline locked yet. (Press 's' to lock current posture as baseline)", col_warn)
+                else:
+                    saved_at = diff["baseline"].get("saved_at", "")[:19]
+                    if diff.get("drift_detected"):
+                        reg_cnt = len(diff.get("regressions", []))
+                        draw(18, 4, f"▲ DRIFT DETECTED: {reg_cnt} regression(s) vs baseline saved {saved_at}", col_fail)
+                    else:
+                        draw(18, 4, f"✔ BASELINE MATCH: Healthy contract (saved {saved_at})", col_pass)
+
+                # Hotkeys & status bar
+                draw(max_y - 3, 0, "├" + "─" * (max_x - 2) + "┤")
+                hotkeys = "HOTKEYS: [r] Refresh Now   [s] Save Baseline Snapshot   [q] Quit"
+                draw(max_y - 2, 2, hotkeys, curses.A_BOLD)
+
+                # Flash message (fade after 4s)
+                if time.time() - status_msg_time > 4.0:
+                    status_msg = f"Live monitoring active (interval: {interval:.1f}s) | Press 'q' to quit"
+                draw(max_y - 1, 2, status_msg, col_cyan)
+
+                # Outer bottom border
+                draw(max_y - 1, 0, "└")
+                draw(max_y - 1, max_x - 1, "┘")
+
+            stdscr.refresh()
+
+            # Handle user input
+            try:
+                ch = stdscr.getch()
+            except curses.error:
+                ch = -1
+
+            if ch in (ord('q'), ord('Q'), 27):
+                break
+            elif ch in (ord('r'), ord('R')):
+                status_msg = "Refreshing security posture now..."
+                status_msg_time = time.time()
+                obs = None
+            elif ch in (ord('s'), ord('S')):
+                if obs and "error" not in obs:
+                    filepath = get_baseline_filepath(target)
+                    save_baseline(obs, filepath=filepath, auto_confirm=True)
+                    try:
+                        baseline = load_baseline(filepath)
+                        diff = compare_drift(baseline, obs)
+                    except Exception:
+                        pass
+                    status_msg = f"✔ Baseline snapshot saved to {filepath.name}!"
+                    status_msg_time = time.time()
+
+        return 0
+
+    try:
+        curses.wrapper(curses_main)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def handle_top(args) -> int:
+    """Handle 'netra top' / 'netra monitor' subcommand."""
+    try:
+        target = validate_url(args.target)
+    except ValueError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 2
+
+    return run_top_dashboard(target, interval=args.interval, timeout=args.timeout)
+
+
 # Argument Parser
 def build_parser() -> argparse.ArgumentParser:
     """Construct CLI argument parser."""
@@ -1017,6 +1382,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout", type=float, default=10.0, help="Network timeout in seconds (default: 10.0)"
     )
 
+    # 5. top / monitor
+    top_p = subparsers.add_parser(
+        "top", aliases=["monitor"], help="Launch interactive live terminal monitoring dashboard (btop-style)"
+    )
+    top_p.add_argument(
+        "--target", required=True, help="Target URL (e.g. https://example.com)"
+    )
+    top_p.add_argument(
+        "--interval", type=float, default=5.0, help="Polling refresh interval in seconds (default: 5.0)"
+    )
+    top_p.add_argument(
+        "--timeout", type=float, default=10.0, help="Network timeout in seconds (default: 10.0)"
+    )
+
     return parser
 
 
@@ -1033,6 +1412,8 @@ def main() -> int:
         return handle_compare(args)
     elif args.command == "notify":
         return handle_notify(args)
+    elif args.command in ("top", "monitor"):
+        return handle_top(args)
 
     parser.print_help()
     return 1

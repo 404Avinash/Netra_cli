@@ -29,9 +29,15 @@ jobs:
         run: |
           python -m py_compile netra.py tests/test_netra.py
 
-      - name: Run Unit Test Suite (39 Tests)
+      - name: Run Unit Test Suite (44 Tests)
         run: |
           python -m unittest discover -s tests -v
+
+      - name: Package Build & CLI Entrypoint Verification
+        run: |
+          pip install -e .
+          netra --version
+          netra --help
 
       - name: CLI Help & Sanity Check
         run: |

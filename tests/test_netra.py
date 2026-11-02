@@ -709,5 +709,95 @@ class TestEnhancedResilienceAndEdgeCases(unittest.TestCase):
         self.assertEqual(len(netra.strip_ansi(padded_colored)), 12)
 
 
+class TestSecurityScoreAndTUI(unittest.TestCase):
+    """Test security score algorithm, grade levels, and CLI commands."""
+
+    def test_score_all_passing(self):
+        obs = {
+            "target": "https://example.com",
+            "timestamp": "2026-11-02T20:00:00Z",
+            "redirect": {"status": "pass"},
+            "tls": {"status": "pass"},
+            "headers": {
+                "Strict-Transport-Security": {"status": "present"},
+                "Content-Security-Policy": {"status": "present"},
+                "X-Content-Type-Options": {"status": "present"},
+                "Referrer-Policy": {"status": "present"},
+            },
+        }
+        score, grade, bar = netra.calculate_security_score(obs)
+        self.assertEqual(score, 100)
+        self.assertEqual(grade, "A+")
+        self.assertEqual(bar, "█" * 20)
+
+    def test_score_partial_missing_headers(self):
+        obs = {
+            "target": "https://example.com",
+            "timestamp": "2026-11-02T20:00:00Z",
+            "redirect": {"status": "pass"},  # 25
+            "tls": {"status": "pass"},       # 25
+            "headers": {
+                "Strict-Transport-Security": {"status": "present"},  # 20
+                "Content-Security-Policy": {"status": "missing"},   # 0
+                "X-Content-Type-Options": {"status": "missing"},    # 0
+                "Referrer-Policy": {"status": "missing"},           # 0
+            },
+        }
+        score, grade, bar = netra.calculate_security_score(obs)
+        self.assertEqual(score, 70)
+        self.assertEqual(grade, "C")
+        self.assertIn("█", bar)
+        self.assertIn("░", bar)
+
+    def test_score_critical_failures(self):
+        obs = {
+            "target": "https://example.com",
+            "timestamp": "2026-11-02T20:00:00Z",
+            "redirect": {"status": "fail"},
+            "tls": {"status": "fail"},
+            "headers": {
+                "Strict-Transport-Security": {"status": "missing"},
+                "Content-Security-Policy": {"status": "missing"},
+                "X-Content-Type-Options": {"status": "missing"},
+                "Referrer-Policy": {"status": "missing"},
+            },
+        }
+        score, grade, bar = netra.calculate_security_score(obs)
+        self.assertEqual(score, 0)
+        self.assertEqual(grade, "F")
+        self.assertEqual(bar, "░" * 20)
+
+    def test_cli_parser_top_and_monitor(self):
+        parser = netra.build_parser()
+        args_top = parser.parse_args(["top", "--target", "https://example.com", "--interval", "2.0"])
+        self.assertEqual(args_top.command, "top")
+        self.assertEqual(args_top.target, "https://example.com")
+        self.assertEqual(args_top.interval, 2.0)
+
+        args_mon = parser.parse_args(["monitor", "--target", "https://example.com"])
+        self.assertEqual(args_mon.command, "monitor")
+        self.assertEqual(args_mon.target, "https://example.com")
+        self.assertEqual(args_mon.interval, 5.0)
+
+    def test_format_observation_table_renders_box_art(self):
+        obs = {
+            "target": "https://example.com",
+            "timestamp": "2026-11-02T20:00:00Z",
+            "redirect": {"status": "pass", "details": "Redirects to HTTPS"},
+            "tls": {"status": "pass", "details": "Valid cert"},
+            "headers": {
+                "Strict-Transport-Security": {"status": "present", "value": "max-age=31536000"},
+                "Content-Security-Policy": {"status": "present", "value": "default-src 'self'"},
+                "X-Content-Type-Options": {"status": "present", "value": "nosniff"},
+                "Referrer-Policy": {"status": "present", "value": "strict-origin"},
+            },
+        }
+        output = netra.format_observation_table(obs)
+        self.assertIn("┌", output)
+        self.assertIn("GRADE: A+", output)
+        self.assertIn("100/100", output)
+        self.assertIn("HTTP -> HTTPS Redirect", output)
+
+
 if __name__ == "__main__":
     unittest.main()

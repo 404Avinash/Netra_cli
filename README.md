@@ -1,5 +1,7 @@
 # NETRA_CLI: Network & Endpoint Threat and Resilience Assessor CLI
 
+[![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
+
 > **Submission:** Swytchcode PPI Assessment  
 > **Author:** Avinash  
 > **Repository:** https://github.com/404Avinash/Netra_cli  

@@ -1,0 +1,55 @@
+name: NETRA_CLI CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Syntax & Compilation Check
+        run: |
+          python -m py_compile netra.py tests/test_netra.py
+
+      - name: Run Unit Test Suite (39 Tests)
+        run: |
+          python -m unittest discover -s tests -v
+
+      - name: CLI Help & Sanity Check
+        run: |
+          python netra.py --help
+          python netra.py --version
+
+      - name: Live Smoke Test (Check & JSON)
+        run: |
+          python netra.py check --target https://example.com
+          python netra.py check --target https://example.com --json
+
+      - name: Baseline & Compare Verification
+        run: |
+          python netra.py baseline save --target https://example.com --yes
+          # Verify compare runs; exit code 0 or 1 on drift is valid
+          python netra.py compare --target https://example.com || [ $? -eq 1 ]
+
+      - name: Notify Preview Safeguard Check
+        run: |
+          # Verify preview mode exits 0 without credentials
+          python netra.py notify --target https://example.com --repo 404Avinash/Netra_cli

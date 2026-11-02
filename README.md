@@ -1,11 +1,20 @@
 # NETRA_CLI
 
+```text
+  _   _ _____ _____ ____      _       ____ _     ___ 
+ | \ | | ____|_   _|  _ \    / \     / ___| |   |_ _|
+ |  \| |  _|   | | | |_) |  / _ \   | |   | |    | | 
+ | |\  | |___  | | |  _ <  / ___ \  | |___| |___ | | 
+ |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
+      Network & Endpoint Threat & Resilience Assessor
+```
+
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**NETRA_CLI** (*Network & Endpoint Threat and Resilience Assessor*) is a lightweight, zero-dependency command-line utility for developers, SREs, and DevOps teams to monitor external web security configurations, prevent silent security drift, and safely dispatch regression alerts.
+**NETRA_CLI** is a lightweight, zero-dependency command-line utility for developers, SREs, and DevOps teams to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression alerts.
 
 ---
 
@@ -16,16 +25,48 @@ In modern development and deployment workflows, web security settings frequently
 - An ingress controller restart causes port 80 to stop redirecting HTTP traffic to HTTPS, exposing visitors to plaintext downgrade attacks.
 - A TLS certificate draws close to expiry or is renewed with unexpected attributes.
 
-Uptime monitors only answer *"is the site up?"*, while heavy vulnerability scanners produce 50-page PDF reports full of noise. **NETRA_CLI** provides a fast, repeatable way to track whether your critical perimeter controls remain configured as intended.
+### Tooling Comparison Matrix
+
+| Capability | Uptime Monitors (e.g. Pingdom) | Vulnerability Scanners (e.g. Nessus) | **NETRA_CLI** |
+|---|:---:|:---:|:---:|
+| **HTTP → HTTPS Redirect Validation** | ❌ Blindly follows redirect | ⚠️ Buried in 50-page PDF | ✅ **Explicit check & validation** |
+| **Header Drift (HSTS, CSP, nosniff)** | ❌ Ignores headers | ⚠️ High false-positive noise | ✅ **Direct presence & RFC validation** |
+| **TLS Expiry Monitoring** | ⚠️ Basic ping | ⚠️ Heavy scheduled agent | ✅ **Calculates days & ignores renewals** |
+| **Execution Speed & Portability** | N/A (SaaS only) | Heavy binary / agents | ✅ **Sub-second, 0 external deps** |
+| **Alerting Pipeline Safety** | Webhook spam | Email alert flood | ✅ **Swytchcode Execution Authority** |
+
+---
+
+## Operational Workflow
+
+```mermaid
+flowchart TD
+    Target(["Target Endpoint\n(https://your-domain.com)"]) --> Check["1. netra check\n(Audit Port 80, TLS & Security Headers)"]
+    Check --> Review{"Review Baseline\nOutput"}
+    Review -->|Approved| Save["2. netra baseline save\n(Lock in baselines/domain.json)"]
+    
+    Save -.-> Deploy["Subsequent Deployment\nor Server Configuration Reload"]
+    Deploy --> Compare["3. netra compare\n(Compare Live Observation vs Baseline)"]
+    
+    Compare --> Decision{"Any Drift\nDetected?"}
+    Decision -->|No Regressions| Success(["✔ Match / Healthy\nExit Code 0"])
+    Decision -->|Regressions Found| Alert["⚠ Alert: Severity Ratings\n& Remediation Guidance"]
+    
+    Alert --> Preview["4. netra notify\n(Preview Issue Markdown)"]
+    Preview --> Confirm{"--confirm flag passed?"}
+    Confirm -->|No| DryRun(["Preview Only\nZero External Calls"])
+    Confirm -->|Yes| Swytch["5. Swytchcode Kernel\n(github.issue.create)"]
+    Swytch --> GHIssue(["🚀 Live GitHub Issue Created\nWithout Secret Sprawl"])
+```
 
 ---
 
 ## Key Features
 
-- **Zero External Dependencies:** Built entirely with Python's standard library (`urllib`, `ssl`, `socket`, `argparse`, `json`, `subprocess`). Runs anywhere Python 3 is available with sub-second execution.
-- **Human-Reviewed Baselines:** Capture an intentional snapshot of verified security controls (`baseline save`) to compare future inspections against.
+- **Zero External Dependencies:** Built entirely with Python's standard library (`urllib`, `ssl`, `socket`, `argparse`, `json`, `subprocess`). Runs out-of-the-box anywhere Python 3 is installed.
+- **Human-Reviewed Baselines:** Capture an intentional snapshot of verified security controls (`baseline save`) to establish your security contract.
 - **Intelligent Drift Detection:** Flags genuine security regressions (e.g., removed headers or expired certificates) while ignoring routine operational modifications (such as certificate renewals).
-- **Execution Authority via Swytchcode:** Rather than scattering raw GitHub API tokens across scripts or environment variables, NETRA delegates issue dispatching to [Swytchcode](https://swytchcode.com)'s local execution kernel. You get safe previews by default and zero credential sprawl.
+- **Execution Authority via Swytchcode:** Rather than scattering raw GitHub API tokens across scripts or environment variables, NETRA delegates issue dispatching to [Swytchcode](https://swytchcode.com)'s local execution kernel. You get safe previews by default, least-privilege guardrails, and zero credential sprawl.
 - **CI/CD & Scripting Ready:** Produces human-readable terminal tables or clean, structured JSON (`--json`) for automation pipelines.
 
 ---
@@ -41,7 +82,47 @@ Uptime monitors only answer *"is the site up?"*, while heavy vulnerability scann
 | **X-Content-Type-Options** | Enforces the strict `nosniff` header value | `present`, `missing`, `inconclusive` | **LOW** |
 | **Referrer-Policy** | Checks header presence and policy definition | `present`, `missing`, `inconclusive` | **LOW** |
 
-> **Resilience Guarantee:** Network timeouts, unreachable ports, or DNS failures cleanly report `inconclusive` with a diagnostic reason—never a false `missing` or unexpected crash.
+> [!TIP]
+> **Resilience Guarantee:** Network timeouts, unreachable ports, or DNS failures cleanly report `inconclusive` with a diagnostic reason—never a false `missing` or unexpected crash. Unverified SSL fallback ensures HTTP security headers can still be inspected even if a target's certificate is untrusted or expired.
+
+---
+
+## Architecture: Why Swytchcode?
+
+Traditional notification scripts require generating personal access tokens (PATs), hardcoding credentials into environment files, and writing custom retry logic.
+
+NETRA uses **Swytchcode** as an *Execution Authority Kernel*:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer / CI Pipeline
+    participant Netra as NETRA_CLI (netra.py)
+    participant Kernel as Swytchcode Kernel (swy exec)
+    participant Wreken as Wrekenfile Contract (YAML)
+    participant Session as Swytchcode OAuth Vault
+    participant GitHub as GitHub REST API
+
+    Dev->>Netra: netra notify --target URL --repo OWNER/REPO --confirm
+    Netra->>Netra: Run drift analysis & build Markdown report
+    Netra->>Kernel: Pipe JSON stdin (tool: github.issue.create, args: {...})
+    Kernel->>Wreken: Validate parameter schemas (owner, repo in path; title, body)
+    Wreken-->>Kernel: Schema Validated
+    Kernel->>Session: Retrieve active OAuth session
+    Session-->>Kernel: In-flight Bearer Token
+    Kernel->>GitHub: POST /repos/{owner}/{repo}/issues (with retry policy)
+    GitHub-->>Kernel: 201 Created (Issue URL)
+    Kernel-->>Netra: Structured JSON Result
+    Netra->>Dev: ✔ Issue created successfully! (URL printed)
+```
+
+### The 5 Architectural Advantages:
+
+1. **Zero Secret Sprawl:** `netra.py` contains no API keys or tokens. Swytchcode manages OAuth credentials out-of-band and injects them in flight.
+2. **Contract-Governed APIs (Wrekenfiles):** The request schema is validated against declarative Wrekenfile contracts before touching the network.
+3. **Principle of Least Privilege:** Only explicitly whitelisted operations in `.swytchcode/tooling.json` (`github.issue.create`) can be triggered.
+4. **Built-in Resilience:** Automatic 3-attempt exponential backoff retries on rate limits (429) or transient errors (503).
+5. **Local Auditability:** Every outbound dispatch is logged locally (`swytchcode audit stats`).
 
 ---
 
@@ -172,30 +253,8 @@ python3 netra.py notify --target https://example.com --repo 404Avinash/Netra_cli
 # Output: ✔ Issue created successfully via Swytchcode!
 ```
 
-> **Live Example:** Inspect an issue created by this tool at [GitHub Issue #1](https://github.com/404Avinash/Netra_cli/issues/1).
-
----
-
-## Architecture: Why Swytchcode?
-
-Traditional notification scripts require generating personal access tokens (PATs), hardcoding credentials into environment files, and writing custom retry logic.
-
-NETRA uses **Swytchcode** as an *Execution Authority Kernel*:
-
-```mermaid
-flowchart LR
-    Netra["NETRA_CLI (netra.py)"] -->|Pipes JSON Stdin| Kernel["Swytchcode Kernel (swytchcode exec)"]
-    Kernel -->|1. Validates Schema| Wrekenfile["GitHub Wrekenfile Contract"]
-    Kernel -->|2. Enforces Whitelist| Tooling["tooling.json (github.issue.create)"]
-    Kernel -->|3. Injects Auth & Retries| Vault["OAuth Session"]
-    Vault -->|4. Dispatches POST /issues| GH["GitHub API"]
-```
-
-1. **Zero Credential Exposure:** `netra.py` contains no API keys or tokens. Swytchcode manages OAuth credentials out-of-band and injects them in flight.
-2. **Contract-Governed APIs (Wrekenfiles):** The request schema is validated against declarative Wrekenfile contracts before touching the network.
-3. **Principle of Least Privilege:** Only explicitly whitelisted operations in `.swytchcode/tooling.json` (`github.issue.create`) can be triggered.
-4. **Built-in Resilience:** Automatic 3-attempt exponential backoff retries on rate limits (429) or transient errors (503).
-5. **Local Auditability:** Every outbound dispatch is logged locally (`swytchcode audit stats`).
+> [!NOTE]
+> **Live Demonstration:** Inspect an issue created live by NETRA_CLI via Swytchcode at [GitHub Issue #1](https://github.com/404Avinash/Netra_cli/issues/1).
 
 ---
 

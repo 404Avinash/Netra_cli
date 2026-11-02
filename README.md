@@ -12,7 +12,7 @@
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
-![Tests](https://img.shields.io/badge/tests-44%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **NETRA_CLI** is a lightweight, zero-dependency developer and DevOps utility to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression issues. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
@@ -209,43 +209,88 @@ Developer / CI               NETRA_CLI (netra.py)          Swytchcode Kernel (sw
 
 ## Installation & Quickstart
 
-### Method A: Install via Pip (Recommended for Global CLI Usage)
+### Method A: One-Line Installer (Recommended)
+
+Install `netra` directly to `~/.local/bin/netra` without requiring sudo or root permissions:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/404Avinash/Netra_cli/main/install.sh | bash
+```
+
+Once installed, invoke `netra` globally from anywhere in your terminal:
+```bash
+netra github.com
+```
+
+### Method B: Install via Pip / Pipx
 
 ```bash
 git clone https://github.com/404Avinash/Netra_cli.git
 cd Netra_cli
 
-# Editable pip install into your environment
+# Editable pip install into your current environment
 pip install -e .
+
+# Or isolated global installation with pipx
+pipx install .
 
 # Run netra from anywhere
 netra --help
 ```
 
-### Method B: Standalone Portable Mode (Zero Installation)
+### Method C: Standalone Portable Mode (Zero Installation)
 
 NETRA runs out-of-the-box anywhere Python 3.10+ is installed:
 
 ```bash
 git clone https://github.com/404Avinash/Netra_cli.git
 cd Netra_cli
-python3 netra.py --help
+python3 netra.py example.com
 ```
 
 ---
 
 ## Usage Guide
 
+### Nmap-Style Bare Domain Invocation (Zero Ceremony)
+
+Just like `nmap` or `curl`, pass any bare domain or URL directly. NETRA automatically normalizes the target (prepending `https://` if no scheme is specified) and executes an instant security audit:
+
+```bash
+# Nmap-style bare invocation (automatically performs security audit)
+netra github.com
+
+# Raw JSON output for automation and jq processing
+netra github.com --json
+
+# Launch live interactive dashboard directly
+netra top github.com
+```
+
+> [!NOTE]
+> **100% Backward Compatible:** All subcommands support both positional targets (`netra check example.com`, `netra top example.com`) and standard flag syntax (`--target https://example.com`).
+
+---
+
 ### 1. Instant Security Audit (`netra check`)
 
 Inspect an endpoint with formatted Trivy-style table output:
 
 ```bash
+# Nmap-style bare domain
+netra github.com
+
+# Positional target
+netra check github.com
+
+# Classic flag syntax
 netra check --target https://github.com
 ```
 
 For scripts and CI pipelines, use `--json`:
 ```bash
+netra github.com --json
+# or
 netra check --target https://github.com --json
 ```
 
@@ -256,9 +301,13 @@ netra check --target https://github.com --json
 Launch an interactive, btop-style monitoring dashboard:
 
 ```bash
-netra top --target https://github.com
+# Positional syntax
+netra top github.com
+
+# Or with custom interval and flags:
+netra top --target https://github.com --interval 3.0
 # or alias:
-netra monitor --target https://github.com --interval 3.0
+netra monitor github.com
 ```
 
 **Interactive Hotkeys:**
@@ -273,8 +322,12 @@ netra monitor --target https://github.com --interval 3.0
 Lock the current posture as the authoritative benchmark:
 
 ```bash
+# Positional syntax
+netra baseline save example.com --yes
+
+# Or flag syntax:
 netra baseline save --target https://example.com --yes
-# ✔ Baseline saved successfully to .netra/baselines/example.com.json
+# ✔ Baseline saved successfully to baselines/example.com.json
 ```
 
 ---
@@ -284,6 +337,10 @@ netra baseline save --target https://example.com --yes
 Compare live security posture against your saved baseline:
 
 ```bash
+# Positional syntax
+netra compare example.com
+
+# Or flag syntax:
 netra compare --target https://example.com
 ```
 
@@ -320,6 +377,10 @@ When regressions occur, file a GitHub issue directly in your tracking repository
 Running without `--confirm` displays a full markdown preview with **zero external network calls**:
 
 ```bash
+# Positional target
+netra notify example.com --repo 404Avinash/Netra_cli
+
+# Flag syntax
 netra notify --target https://example.com --repo 404Avinash/Netra_cli
 ```
 
@@ -327,6 +388,8 @@ netra notify --target https://example.com --repo 404Avinash/Netra_cli
 Pass `--confirm` to route the dispatch through Swytchcode's kernel:
 
 ```bash
+netra notify example.com --repo 404Avinash/Netra_cli --confirm
+# or:
 netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
 # ✔ Issue created successfully via Swytchcode!
 # Issue URL: https://github.com/404Avinash/Netra_cli/issues/1
@@ -359,7 +422,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 ```text
-Ran 44 tests in 0.112s
+Ran 50 tests in 0.191s
 
 OK
 ```

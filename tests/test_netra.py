@@ -39,7 +39,6 @@ class TestURLAndRepoValidation(unittest.TestCase):
         invalid = [
             "",
             "ftp://example.com",
-            "example.com",
             "http://",
             "https://",
             "just_a_string",
@@ -47,6 +46,20 @@ class TestURLAndRepoValidation(unittest.TestCase):
         for url in invalid:
             with self.assertRaises(ValueError):
                 netra.validate_url(url)
+
+    def test_scheme_normalization(self):
+        """Test auto-prepending https:// to bare domains and normal targets."""
+        cases = [
+            ("example.com", "https://example.com"),
+            ("example.com:8443", "https://example.com:8443"),
+            ("sub.domain.org/path?query=1", "https://sub.domain.org/path?query=1"),
+            ("https://example.com", "https://example.com"),
+            ("http://example.com", "http://example.com"),
+            ("localhost:8080", "https://localhost:8080"),
+            ("localhost", "https://localhost"),
+        ]
+        for raw, expected in cases:
+            self.assertEqual(netra.validate_url(raw), expected)
 
     def test_valid_repos(self):
         valid = [
@@ -799,5 +812,101 @@ class TestSecurityScoreAndTUI(unittest.TestCase):
         self.assertIn("HTTP -> HTTPS Redirect", output)
 
 
+
+class TestCLIErgonomicsAndPositionalArgs(unittest.TestCase):
+    """Test nmap-style bare domain invocation and positional arguments across all commands."""
+
+    def test_bare_domain_invocation_routes_to_check(self):
+        parser = netra.build_parser()
+        args1 = parser.parse_args(["example.com"])
+        self.assertEqual(args1.command, "check")
+        self.assertEqual(args1.target, "example.com")
+        self.assertFalse(args1.json)
+
+        args2 = parser.parse_args(["https://example.com"])
+        self.assertEqual(args2.command, "check")
+        self.assertEqual(args2.target, "https://example.com")
+
+        args3 = parser.parse_args(["example.com", "--json"])
+        self.assertEqual(args3.command, "check")
+        self.assertEqual(args3.target, "example.com")
+        self.assertTrue(args3.json)
+
+    def test_positional_arguments_for_subcommands(self):
+        parser = netra.build_parser()
+
+        # check
+        args_check = parser.parse_args(["check", "example.com"])
+        self.assertEqual(args_check.command, "check")
+        self.assertEqual(args_check.target, "example.com")
+
+        # top & monitor
+        args_top = parser.parse_args(["top", "example.com", "--interval", "2.5"])
+        self.assertEqual(args_top.command, "top")
+        self.assertEqual(args_top.target, "example.com")
+        self.assertEqual(args_top.interval, 2.5)
+
+        args_mon = parser.parse_args(["monitor", "example.com"])
+        self.assertEqual(args_mon.command, "monitor")
+        self.assertEqual(args_mon.target, "example.com")
+
+        # compare
+        args_comp = parser.parse_args(["compare", "example.com"])
+        self.assertEqual(args_comp.command, "compare")
+        self.assertEqual(args_comp.target, "example.com")
+
+        # baseline save
+        args_base = parser.parse_args(["baseline", "save", "example.com", "--yes"])
+        self.assertEqual(args_base.command, "baseline")
+        self.assertEqual(args_base.baseline_action, "save")
+        self.assertEqual(args_base.target, "example.com")
+        self.assertTrue(args_base.yes)
+
+        # notify
+        args_notif = parser.parse_args(["notify", "example.com", "--repo", "404Avinash/Netra_cli"])
+        self.assertEqual(args_notif.command, "notify")
+        self.assertEqual(args_notif.target, "example.com")
+        self.assertEqual(args_notif.repo, "404Avinash/Netra_cli")
+
+    def test_flag_backward_compatibility(self):
+        parser = netra.build_parser()
+
+        args_check = parser.parse_args(["check", "--target", "https://example.com", "--json"])
+        self.assertEqual(args_check.command, "check")
+        self.assertEqual(args_check.target, "https://example.com")
+        self.assertTrue(args_check.json)
+
+        args_top = parser.parse_args(["top", "--target", "https://example.com", "--interval", "3.0"])
+        self.assertEqual(args_top.command, "top")
+        self.assertEqual(args_top.target, "https://example.com")
+
+        args_comp = parser.parse_args(["compare", "--target", "https://example.com"])
+        self.assertEqual(args_comp.command, "compare")
+        self.assertEqual(args_comp.target, "https://example.com")
+
+        args_base = parser.parse_args(["baseline", "save", "--target", "https://example.com", "--yes"])
+        self.assertEqual(args_base.command, "baseline")
+        self.assertEqual(args_base.target, "https://example.com")
+        self.assertTrue(args_base.yes)
+
+    def test_missing_target_fails(self):
+        parser = netra.build_parser()
+        for cmd_args in [["check"], ["top"], ["compare"], ["baseline", "save"]]:
+            with self.assertRaises(SystemExit) as ctx:
+                parser.parse_args(cmd_args)
+            self.assertEqual(ctx.exception.code, 2)
+
+    @patch("netra.handle_check")
+    def test_main_bare_domain_dispatch(self, mock_handle_check):
+        mock_handle_check.return_value = 0
+        ret = netra.main(["example.com"])
+        self.assertEqual(ret, 0)
+        self.assertTrue(mock_handle_check.called)
+        args = mock_handle_check.call_args[0][0]
+        self.assertEqual(args.command, "check")
+        self.assertEqual(args.target, "example.com")
+
+
 if __name__ == "__main__":
     unittest.main()
+

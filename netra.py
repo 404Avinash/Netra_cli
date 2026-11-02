@@ -174,13 +174,22 @@ def calculate_security_score(obs: dict) -> tuple[int, str, str]:
 # Input Validation
 def validate_url(url_str: str) -> str:
     """
-    Validate target URL format.
+    Validate and normalize target URL format.
     Must contain scheme (http or https) and a valid netloc/hostname.
+    If scheme is missing (e.g. example.com), automatically prepends https://.
     """
     if not url_str or not isinstance(url_str, str):
         raise ValueError("Target URL cannot be empty.")
 
-    parsed = urllib.parse.urlparse(url_str.strip())
+    url_str = url_str.strip()
+    if not url_str:
+        raise ValueError("Target URL cannot be empty.")
+
+    # Auto-normalize target URLs lacking a scheme (nmap-style ergonomics)
+    if "://" not in url_str:
+        url_str = f"https://{url_str}"
+
+    parsed = urllib.parse.urlparse(url_str)
     if parsed.scheme.lower() not in ("http", "https"):
         raise ValueError(
             f"Invalid URL scheme '{parsed.scheme}'. Target must start with http:// or https://"
@@ -188,7 +197,11 @@ def validate_url(url_str: str) -> str:
     if not parsed.netloc or not parsed.hostname:
         raise ValueError(f"Invalid target URL '{url_str}'. Must include a valid hostname.")
 
-    return url_str.strip()
+    hostname = parsed.hostname.lower()
+    if "." not in hostname and ":" not in hostname and hostname != "localhost":
+        raise ValueError(f"Invalid target URL '{url_str}'. Must include a valid hostname.")
+
+    return url_str
 
 
 def validate_repo(repo_str: str) -> tuple[str, str]:
@@ -964,7 +977,8 @@ def dispatch_swytchcode_issue(owner: str, repo: str, title: str, body: str) -> i
 def handle_check(args) -> int:
     """Handle 'netra check' subcommand."""
     try:
-        obs = observe(args.target, timeout=args.timeout)
+        target = validate_url(args.target)
+        obs = observe(target, timeout=args.timeout)
     except ValueError as e:
         sys.stderr.write(f"Error: {e}\n")
         return 2
@@ -979,12 +993,13 @@ def handle_check(args) -> int:
 def handle_baseline_save(args) -> int:
     """Handle 'netra baseline save' subcommand."""
     try:
-        obs = observe(args.target, timeout=args.timeout)
+        target = validate_url(args.target)
+        obs = observe(target, timeout=args.timeout)
     except ValueError as e:
         sys.stderr.write(f"Error: {e}\n")
         return 2
 
-    filepath = get_baseline_filepath(args.target)
+    filepath = get_baseline_filepath(target)
     success = save_baseline(obs, filepath=filepath, auto_confirm=args.yes)
     return 0 if success else 1
 
@@ -1308,10 +1323,43 @@ def handle_top(args) -> int:
     return run_top_dashboard(target, interval=args.interval, timeout=args.timeout)
 
 
+class NetraArgumentParser(argparse.ArgumentParser):
+    """Custom parser providing nmap-style bare domain invocation and positional targets."""
+
+    def parse_args(self, args=None, namespace=None):
+        if args is None:
+            args = sys.argv[1:]
+        else:
+            args = list(args)
+
+        known_subcommands = {"check", "baseline", "compare", "notify", "top", "monitor"}
+        help_version_flags = {"-h", "--help", "--version", "-v"}
+
+        # Nmap-style ergonomics: if invoked without a known subcommand or help/version flags,
+        # route automatically to 'check' (e.g. `netra example.com` or `netra example.com --json`)
+        if (
+            args
+            and not any(a in known_subcommands for a in args)
+            and not any(a in help_version_flags for a in args)
+        ):
+            args = ["check"] + args
+
+        ns = super().parse_args(args, namespace)
+
+        # Consolidate positional target with --target flag
+        if hasattr(ns, "target_pos"):
+            if getattr(ns, "target", None) is None:
+                ns.target = ns.target_pos
+            if not getattr(ns, "target", None):
+                self.error("the following arguments are required: target (or --target)")
+
+        return ns
+
+
 # Argument Parser
 def build_parser() -> argparse.ArgumentParser:
     """Construct CLI argument parser."""
-    parser = argparse.ArgumentParser(
+    parser = NetraArgumentParser(
         prog="netra",
         description="NETRA_CLI: Network & Endpoint Threat and Resilience Assessor CLI",
     )
@@ -1319,14 +1367,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--version", action="version", version=f"NETRA_CLI v{VERSION}"
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=NetraArgumentParser
+    )
 
     # 1. check
     check_p = subparsers.add_parser(
         "check", help="Inspect a target URL's security posture (redirect, TLS, headers)"
     )
     check_p.add_argument(
-        "--target", required=True, help="Target URL (e.g. https://example.com)"
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="target",
+        help="Target URL (e.g. example.com or https://example.com)",
+    )
+    check_p.add_argument(
+        "--target", default=None, help="Target URL (e.g. https://example.com)"
     )
     check_p.add_argument(
         "--json", action="store_true", help="Output observation in raw JSON"
@@ -1337,10 +1394,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 2. baseline
     baseline_p = subparsers.add_parser("baseline", help="Manage security baselines")
-    baseline_sub = baseline_p.add_subparsers(dest="baseline_action", required=True)
-    base_save_p = baseline_sub.add_parser("save", help="Save current observation as reviewed baseline")
+    baseline_sub = baseline_p.add_subparsers(
+        dest="baseline_action", required=True, parser_class=NetraArgumentParser
+    )
+    base_save_p = baseline_sub.add_parser(
+        "save", help="Save current observation as reviewed baseline"
+    )
     base_save_p.add_argument(
-        "--target", required=True, help="Target URL (e.g. https://example.com)"
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="target",
+        help="Target URL (e.g. example.com or https://example.com)",
+    )
+    base_save_p.add_argument(
+        "--target", default=None, help="Target URL (e.g. https://example.com)"
     )
     base_save_p.add_argument(
         "--yes", action="store_true", help="Auto-confirm save without interactive prompt"
@@ -1354,7 +1422,14 @@ def build_parser() -> argparse.ArgumentParser:
         "compare", help="Compare target URL live security posture against saved baseline"
     )
     comp_p.add_argument(
-        "--target", required=True, help="Target URL (e.g. https://example.com)"
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="target",
+        help="Target URL (e.g. example.com or https://example.com)",
+    )
+    comp_p.add_argument(
+        "--target", default=None, help="Target URL (e.g. https://example.com)"
     )
     comp_p.add_argument(
         "--json", action="store_true", help="Output drift comparison in raw JSON"
@@ -1368,7 +1443,14 @@ def build_parser() -> argparse.ArgumentParser:
         "notify", help="Generate or dispatch GitHub issue alert for detected drift"
     )
     notif_p.add_argument(
-        "--target", required=True, help="Target URL (e.g. https://example.com)"
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="target",
+        help="Target URL (e.g. example.com or https://example.com)",
+    )
+    notif_p.add_argument(
+        "--target", default=None, help="Target URL (e.g. https://example.com)"
     )
     notif_p.add_argument(
         "--repo", required=True, help="GitHub repository in OWNER/REPO format"
@@ -1387,7 +1469,14 @@ def build_parser() -> argparse.ArgumentParser:
         "top", aliases=["monitor"], help="Launch interactive live terminal monitoring dashboard (btop-style)"
     )
     top_p.add_argument(
-        "--target", required=True, help="Target URL (e.g. https://example.com)"
+        "target_pos",
+        nargs="?",
+        default=None,
+        metavar="target",
+        help="Target URL (e.g. example.com or https://example.com)",
+    )
+    top_p.add_argument(
+        "--target", default=None, help="Target URL (e.g. https://example.com)"
     )
     top_p.add_argument(
         "--interval", type=float, default=5.0, help="Polling refresh interval in seconds (default: 5.0)"
@@ -1399,9 +1488,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "check":
         return handle_check(args)
@@ -1421,3 +1510,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

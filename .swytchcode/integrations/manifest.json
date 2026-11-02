@@ -1,0 +1,91 @@
+{
+  "GitHub.github@1.1.4": {
+    "version": "1.1.4",
+    "sandbox_endpoint": "",
+    "production_endpoint": "https://api.github.com",
+    "methods": 1204,
+    "auth": {
+      "provider_slug": "GitHub",
+      "scopes": [],
+      "type": "oauth2"
+    },
+    "init_details": {
+      "VERSION": "2.0.2",
+      "auth_type": "oauth2"
+    },
+    "execution_policy": {
+      "max_retries": 3,
+      "base_delay_ms": 500,
+      "max_delay_ms": 30000,
+      "http_timeout_ms": 30000,
+      "connect_timeout_ms": 5000,
+      "total_timeout_ms": 90000,
+      "retry_on": [
+        429,
+        503,
+        504
+      ],
+      "non_retryable": [
+        400,
+        401,
+        403,
+        404,
+        422
+      ],
+      "on_401": "fail",
+      "max_concurrent": 5,
+      "max_response_bytes": 102400,
+      "idempotency": {
+        "mode": "none",
+        "header_name": "Idempotency-Key",
+        "scope": "call"
+      }
+    },
+    "library_uuid": "3de747b8-0ef4-4d4f-b2d4-4ee5eaf283ea",
+    "private": false
+  },
+  "Stripe.stripe@2026-06-24.dahlia": {
+    "version": "2026-06-24.dahlia",
+    "sandbox_endpoint": "",
+    "production_endpoint": "https://api.stripe.com/",
+    "methods": 587,
+    "auth": {
+      "provider_slug": "Stripe",
+      "type": "api_key"
+    },
+    "init_details": {
+      "VERSION": "2.0.2",
+      "auth_type": "api_key"
+    },
+    "execution_policy": {
+      "max_retries": 3,
+      "base_delay_ms": 500,
+      "max_delay_ms": 30000,
+      "http_timeout_ms": 30000,
+      "connect_timeout_ms": 5000,
+      "total_timeout_ms": 90000,
+      "retry_on": [
+        429,
+        503,
+        504
+      ],
+      "non_retryable": [
+        400,
+        401,
+        403,
+        404,
+        422
+      ],
+      "on_401": "fail",
+      "max_concurrent": 5,
+      "max_response_bytes": 102400,
+      "idempotency": {
+        "mode": "none",
+        "header_name": "Idempotency-Key",
+        "scope": "call"
+      }
+    },
+    "library_uuid": "8986d84d-a445-4045-abc0-5fd117d08072",
+    "private": false
+  }
+}

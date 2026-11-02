@@ -1,14 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/sh
 #
 # NETRA_CLI One-Line Installer
 # Installs netra to ~/.local/bin/netra without requiring root privileges.
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/404Avinash/Netra_cli/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/404Avinash/Netra_cli/main/install.sh | sh
+#   or: curl -sSL https://raw.githubusercontent.com/404Avinash/Netra_cli/main/install.sh | bash
 #   or from a local clone: ./install.sh
 #
 
-set -euo pipefail
+set -eu
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,12 +29,12 @@ for candidate in python3 python; do
 done
 
 if [ -z "$PYTHON_BIN" ]; then
-    echo -e "${RED}Error: NETRA_CLI requires Python 3.10 or higher.${NC}" >&2
+    printf "%b\n" "${RED}Error: NETRA_CLI requires Python 3.10 or higher.${NC}" >&2
     if command -v python3 >/dev/null 2>&1; then
         CURRENT_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')" 2>/dev/null || echo "unknown")
-        echo -e "Found python3 version ${CURRENT_VER}. Please upgrade to Python 3.10+." >&2
+        printf "%b\n" "Found python3 version ${CURRENT_VER}. Please upgrade to Python 3.10+." >&2
     else
-        echo -e "Neither 'python3' nor 'python' was found in your PATH." >&2
+        printf "%b\n" "Neither 'python3' nor 'python' was found in your PATH." >&2
     fi
     exit 1
 fi
@@ -44,7 +45,10 @@ TARGET_BIN="${INSTALL_DIR}/netra"
 mkdir -p "${INSTALL_DIR}"
 
 # 3. Obtain netra.py (local repo or GitHub raw download)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+SCRIPT_DIR=""
+if [ -f "$0" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "")"
+fi
 
 if [ -n "$SCRIPT_DIR" ] && [ -f "${SCRIPT_DIR}/netra.py" ]; then
     cp "${SCRIPT_DIR}/netra.py" "${TARGET_BIN}"
@@ -52,13 +56,13 @@ elif [ -f "./netra.py" ]; then
     cp "./netra.py" "${TARGET_BIN}"
 else
     REPO_RAW_URL="https://raw.githubusercontent.com/404Avinash/Netra_cli/main/netra.py"
-    echo -e "${BLUE}Downloading netra from ${REPO_RAW_URL}...${NC}"
+    printf "%b\n" "${BLUE}Downloading netra from ${REPO_RAW_URL}...${NC}"
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL "${REPO_RAW_URL}" -o "${TARGET_BIN}"
     elif command -v wget >/dev/null 2>&1; then
         wget -qO "${TARGET_BIN}" "${REPO_RAW_URL}"
     else
-        echo -e "${RED}Error: Neither 'curl' nor 'wget' found. Cannot download netra.${NC}" >&2
+        printf "%b\n" "${RED}Error: Neither 'curl' nor 'wget' found. Cannot download netra.${NC}" >&2
         exit 1
     fi
 fi
@@ -80,16 +84,14 @@ EXPORT_CMD="export PATH=\"\$HOME/.local/bin:\$PATH\""
 if [ "$PATH_CONFIGURED" = false ]; then
     for rc in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile"; do
         if [ -f "$rc" ] && ! grep -q '\.local/bin' "$rc"; then
-            echo "" >> "$rc"
-            echo "# NETRA_CLI path" >> "$rc"
-            echo "$EXPORT_CMD" >> "$rc"
+            printf "\n# NETRA_CLI path\n%s\n" "$EXPORT_CMD" >> "$rc"
             RC_UPDATED=true
         fi
     done
 fi
 
 # 6. Friendly Completion Banner
-echo -e "${BLUE}${BOLD}"
+printf "%b\n" "${BLUE}${BOLD}"
 cat << 'EOF'
   _   _ _____ _____ ____      _       ____ _     ___ 
  | \ | | ____|_   _|  _ \    / \     / ___| |   |_ _|
@@ -98,21 +100,21 @@ cat << 'EOF'
  |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
       Network & Endpoint Threat & Resilience Assessor
 EOF
-echo -e "${NC}"
+printf "%b\n" "${NC}"
 
-echo -e "${GREEN}✔ NETRA_CLI successfully installed to ${BOLD}${TARGET_BIN}${NC}\n"
+printf "%b\n\n" "${GREEN}✔ NETRA_CLI successfully installed to ${BOLD}${TARGET_BIN}${NC}"
 
 if [ "$PATH_CONFIGURED" = false ]; then
     if [ "$RC_UPDATED" = true ]; then
-        echo -e "${BOLD}Note:${NC} Added ~/.local/bin to your shell config. To use 'netra' in this terminal:"
-        echo -e "  ${BOLD}${EXPORT_CMD}${NC} (or restart your shell)\n"
+        printf "%b\n" "${BOLD}Note:${NC} Added ~/.local/bin to your shell config. To use 'netra' in this terminal:"
+        printf "%b\n\n" "  ${BOLD}${EXPORT_CMD}${NC} (or restart your shell)"
     else
-        echo -e "${BOLD}Note:${NC} ~/.local/bin is not yet in your PATH. Add it with:"
-        echo -e "  ${BOLD}${EXPORT_CMD}${NC}\n"
+        printf "%b\n" "${BOLD}Note:${NC} ~/.local/bin is not yet in your PATH. Add it with:"
+        printf "%b\n\n" "  ${BOLD}${EXPORT_CMD}${NC}"
     fi
 fi
 
-echo -e "Try it now:"
-echo -e "  ${BOLD}netra example.com${NC}          # Nmap-style instant security audit"
-echo -e "  ${BOLD}netra top example.com${NC}      # Live interactive dashboard"
-echo -e "  ${BOLD}netra --help${NC}               # View all subcommands and options"
+printf "%b\n" "Try it now:"
+printf "%b\n" "  ${BOLD}netra example.com${NC}          # Nmap-style instant security audit"
+printf "%b\n" "  ${BOLD}netra top example.com${NC}      # Live interactive dashboard"
+printf "%b\n" "  ${BOLD}netra --help${NC}               # View all subcommands and options"

@@ -1335,14 +1335,17 @@ class NetraArgumentParser(argparse.ArgumentParser):
         known_subcommands = {"check", "baseline", "compare", "notify", "top", "monitor"}
         help_version_flags = {"-h", "--help", "--version", "-v"}
 
-        # Nmap-style ergonomics: if invoked without a known subcommand or help/version flags,
-        # route automatically to 'check' (e.g. `netra example.com` or `netra example.com --json`)
-        if (
-            args
-            and not any(a in known_subcommands for a in args)
-            and not any(a in help_version_flags for a in args)
-        ):
-            args = ["check"] + args
+        # Nmap-style ergonomics: if invoked on root parser without a known subcommand,
+        # route automatically to 'check' (e.g. `netra example.com` or `netra example.com --json`),
+        # unless user requested root-level help/version with no other arguments.
+        if self.prog == "netra":
+            is_pure_root_help = bool(args) and set(args).issubset(help_version_flags)
+            if (
+                args
+                and not is_pure_root_help
+                and not any(a in known_subcommands for a in args)
+            ):
+                args = ["check"] + args
 
         ns = super().parse_args(args, namespace)
 
@@ -1351,7 +1354,24 @@ class NetraArgumentParser(argparse.ArgumentParser):
             if getattr(ns, "target", None) is None:
                 ns.target = ns.target_pos
             if not getattr(ns, "target", None):
-                self.error("the following arguments are required: target (or --target)")
+                # Delegate to the subparser's error reporter for command-specific usage
+                subparser = None
+                for action in self._actions:
+                    if isinstance(action, argparse._SubParsersAction):
+                        cmd = getattr(ns, action.dest, None)
+                        if cmd and cmd in action.choices:
+                            subparser = action.choices[cmd]
+                            if hasattr(ns, "baseline_action") and hasattr(subparser, "_actions"):
+                                for subact in subparser._actions:
+                                    if isinstance(subact, argparse._SubParsersAction):
+                                        bcmd = getattr(ns, subact.dest, None)
+                                        if bcmd and bcmd in subact.choices:
+                                            subparser = subact.choices[bcmd]
+                            break
+                if subparser:
+                    subparser.error("the following arguments are required: target (or --target)")
+                else:
+                    self.error("the following arguments are required: target (or --target)")
 
         return ns
 
@@ -1364,11 +1384,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="NETRA_CLI: Network & Endpoint Threat and Resilience Assessor CLI",
     )
     parser.add_argument(
-        "--version", action="version", version=f"NETRA_CLI v{VERSION}"
+        "-v", "--version", action="version", version=f"NETRA_CLI v{VERSION}"
     )
 
     subparsers = parser.add_subparsers(
-        dest="command", required=True, parser_class=NetraArgumentParser
+        dest="command", required=True
     )
 
     # 1. check
@@ -1395,7 +1415,7 @@ def build_parser() -> argparse.ArgumentParser:
     # 2. baseline
     baseline_p = subparsers.add_parser("baseline", help="Manage security baselines")
     baseline_sub = baseline_p.add_subparsers(
-        dest="baseline_action", required=True, parser_class=NetraArgumentParser
+        dest="baseline_action", required=True
     )
     base_save_p = baseline_sub.add_parser(
         "save", help="Save current observation as reviewed baseline"

@@ -29,7 +29,7 @@ jobs:
         run: |
           python -m py_compile netra.py tests/test_netra.py
 
-      - name: Run Unit Test Suite (50 Tests)
+      - name: Run Unit Test Suite (54 Tests)
         run: |
           python -m unittest discover -s tests -v
 
@@ -41,6 +41,7 @@ jobs:
 
       - name: Global Installer & Bare Domain Verification
         run: |
+          sh install.sh
           bash install.sh
           ~/.local/bin/netra --version
           ~/.local/bin/netra example.com

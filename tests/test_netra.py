@@ -906,6 +906,33 @@ class TestCLIErgonomicsAndPositionalArgs(unittest.TestCase):
         self.assertEqual(args.command, "check")
         self.assertEqual(args.target, "example.com")
 
+    def test_bare_domain_with_help(self):
+        parser = netra.build_parser()
+        with self.assertRaises(SystemExit) as ctx:
+            parser.parse_args(["example.com", "--help"])
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_version_flags(self):
+        parser = netra.build_parser()
+        for flag in ["--version", "-v"]:
+            with self.assertRaises(SystemExit) as ctx:
+                parser.parse_args([flag])
+            self.assertEqual(ctx.exception.code, 0)
+
+    def test_direct_subparser_positional(self):
+        parser = netra.build_parser()
+        subact = [a for a in parser._actions if isinstance(a, netra.argparse._SubParsersAction)][0]
+        check_p = subact.choices["check"]
+        args = check_p.parse_args(["example.com"])
+        self.assertEqual(args.target, "example.com")
+
+    def test_bare_flag_without_subcommand(self):
+        parser = netra.build_parser()
+        args = parser.parse_args(["--target", "https://example.com", "--json"])
+        self.assertEqual(args.command, "check")
+        self.assertEqual(args.target, "https://example.com")
+        self.assertTrue(args.json)
+
 
 if __name__ == "__main__":
     unittest.main()

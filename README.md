@@ -12,7 +12,7 @@
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
-![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **NETRA_CLI** is a lightweight, zero-dependency developer and DevOps utility to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression issues. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
@@ -422,7 +422,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 ```text
-Ran 50 tests in 0.191s
+Ran 54 tests in 0.197s
 
 OK
 ```

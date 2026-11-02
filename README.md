@@ -39,68 +39,41 @@ In modern development and deployment workflows, web security settings frequently
 
 ## Operational Workflow
 
-```text
-  +-------------------------------------------------------------------------+
-  |                             TARGET ENDPOINT                             |
-  |                        https://your-domain.com                          |
-  +------------------------------------+------------------------------------+
-                                       |
-                                       v
-  +-------------------------------------------------------------------------+
-  | 1. netra check                                                          |
-  |    Audit Port 80, TLS Certificate & 4 Security Headers                  |
-  +------------------------------------+------------------------------------+
-                                       |
-                                       v
-                             /-------------------\
-                            /   Review Baseline   \
-                           <       Findings?       >
-                            \                     /
-                             \---------+---------/
-                                       | [Approved]
-                                       v
-  +-------------------------------------------------------------------------+
-  | 2. netra baseline save                                                  |
-  |    Lock in benchmark under baselines/<hostname>.json                    |
-  +------------------------------------+------------------------------------+
-                                       |
-                                       | (Subsequent Deploy / Config Reload)
-                                       v
-  +-------------------------------------------------------------------------+
-  | 3. netra compare                                                        |
-  |    Compare Live Observation against Reviewed Baseline                   |
-  +------------------------------------+------------------------------------+
-                                       |
-                                       v
-                             /-------------------\
-                            /     Any Drift       \
-                           <      Detected?        >
-                            \                     /
-                             \----+------------+-/
-                         [No]     |            | [Yes: Regressions]
-                           |      |            v
-                           |      |  +--------------------------------------+
-                           |      |  | 4. netra notify                      |
-                           |      |  |    Calculate Severity & Show Preview |
-                           |      |  +-----------------+--------------------+
-                           |      |                    |
-                           |      |                    v
-                           |      |          /-------------------\
-                           |      |         /   --confirm flag    \
-                           |      |        <       passed?         >
-                           |      |         \                     /
-                           |      |          \----+------------+-/
-                           |      |          [No] |            | [Yes]
-                           |      |            |  |            v
-                           |      |            |  |  +----------------------+
-                           |      |            |  |  | 5. Swytchcode Kernel |
-                           |      |            |  |  |    github.issue.create|
-                           |      |            |  |  +---------+------------+
-                           v      v            v  v            v
-                       +-------------+   +--------------+  +----------------+
-                       | MATCH       |   | PREVIEW ONLY |  | LIVE GITHUB    |
-                       | Exit Code 0 |   | 0 Net Calls  |  | ISSUE CREATED  |
-                       +-------------+   +--------------+  +----------------+
+### Security Baseline Lifecycle (Git Graph)
+
+```mermaid
+gitGraph
+    commit id: "Initial Check"
+    commit id: "Review Controls"
+    branch baseline
+    checkout baseline
+    commit id: "Save Baseline" tag: "baseline.json"
+    checkout main
+    commit id: "Server Deploy"
+    branch drift-analysis
+    checkout drift-analysis
+    commit id: "Compare Drift"
+    commit id: "Issue Preview"
+    checkout main
+    merge drift-analysis id: "Swytchcode Issue" tag: "Issue #1"
+```
+
+### Execution Flowchart
+
+```mermaid
+flowchart TD
+    A["Target Website"] --> B["1. netra check"]
+    B --> C{"Review Baseline"}
+    C -->|Approved| D["2. netra baseline save"]
+    D --> E["Server Config Reload"]
+    E --> F["3. netra compare"]
+    F --> G{"Drift Detected?"}
+    G -->|No Drift| H["Match (Healthy)"]
+    G -->|Regressions| I["4. netra notify"]
+    I --> J{"Confirm Flag?"}
+    J -->|No| K["Safe Preview"]
+    J -->|Yes| L["5. Swytchcode Kernel"]
+    L --> M["GitHub Issue Created"]
 ```
 
 ---
@@ -137,44 +110,26 @@ Traditional notification scripts require generating personal access tokens (PATs
 
 NETRA uses **Swytchcode** as an *Execution Authority Kernel*:
 
-```text
-[ Developer / CI Pipeline ]
-         │
-         │  netra notify --target URL --repo OWNER/REPO --confirm
-         ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                             NETRA_CLI                                    │
-│                                                                          │
-│  1. Run drift detection engine                                           │
-│  2. Build formatted Markdown alert issue body                            │
-│  3. Pipe structured JSON payload via stdin                               │
-└────────────────────────────────────┬─────────────────────────────────────┘
-                                     │
-                                     │ echo '{"tool": "github.issue.create", ...}' | swy exec
-                                     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                   SWYTCHCODE EXECUTION AUTHORITY KERNEL                  │
-│                                                                          │
-│   ├── [1] Wrekenfile Contract Validation (wrekenfile.yaml)               │
-│   │       Validates owner/repo path params & JSON body schema locally    │
-│   │                                                                      │
-│   ├── [2] Tool Whitelist Check (tooling.json)                            │
-│   │       Enforces strict least privilege (github.issue.create only)     │
-│   │                                                                      │
-│   ├── [3] In-Flight OAuth Credential Injection                           │
-│   │       Zero plaintext secrets in code; token injected into header     │
-│   │                                                                      │
-│   └── [4] Policy & Resilience Engine                                     │
-│           Automatic 3-attempt backoff on 429/503/504; 30s timeout        │
-└────────────────────────────────────┬─────────────────────────────────────┘
-                                     │
-                                     │ Authenticated POST /repos/{owner}/{repo}/issues
-                                     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                            GITHUB REST API                               │
-│                                                                          │
-│             Returns 201 Created -> Issue URL Printed in Terminal         │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer / CI
+    participant Netra as NETRA CLI
+    participant Kernel as Swytchcode Kernel
+    participant Contract as Wrekenfile Schema
+    participant Vault as OAuth Session
+    participant GitHub as GitHub REST API
+
+    Dev->>Netra: netra notify with confirm
+    Netra->>Kernel: Pipe JSON payload via stdin
+    Kernel->>Contract: Validate parameter schema locally
+    Contract-->>Kernel: Schema verified
+    Kernel->>Vault: Retrieve active OAuth credentials
+    Vault-->>Kernel: In-flight Bearer token
+    Kernel->>GitHub: POST issue to repository
+    GitHub-->>Kernel: 201 Created with issue URL
+    Kernel-->>Netra: Structured JSON response
+    Netra->>Dev: Issue created successfully
 ```
 
 ### The 5 Architectural Advantages:

@@ -101,3 +101,81 @@ This friction diary documents all steps, unexpected behaviors, rough edges, docu
   ```
 * **Friction / Rough Edge:** When `swytchcode init --mode sandbox` is chosen, the fetched `manifest.json` populates `production_endpoint` with `https://api.github.com` but leaves `sandbox_endpoint` blank (`""`). This causes immediate warnings or dead URLs unless the user manually edits `manifest.json` or switches mode to `production`.
 * **Status / Resolution:** Documented workarounds: configure `manifest.json` with a mock server or set `mode: "production"` in `tooling.json`.
+
+---
+
+### Entry 7: Locating the Canonical Method ID for GitHub Issue Creation
+* **Step Attempting:** Identifying and enabling the exact Swytchcode method ID for creating GitHub issues from NETRA_CLI.
+* **Command / Action:** `swytchcode list methods | grep -i issue`
+* **What I Expected:** A single intuitive canonical ID such as `github.issues.create` or `github.create_issue`.
+* **What Actually Happened:** The GitHub provider bundle includes over 40 issue-related methods (`github.issue.create`, `github.issue_comment.create`, `github.issue_event.list`, `github.issue_label.add`, etc.). Searching the full methods list without filtering by HTTP endpoint or inspecting the Wrekenfile requires parsing a large bundle.
+* **Next Step / AI Action:** Inspected `.swytchcode/integrations/GitHub/github/1.1.4/methods.json` and matched endpoint `POST /repos/{owner}/{repo}/issues` to canonical ID `github.issue.create`.
+* **Status / Resolution:** Confirmed `github.issue.create` is enabled in `tooling.json` with `swytchcode list tooling`.
+
+---
+
+### Entry 8: Parameter Schema Structure for Path vs Body Arguments in `swytchcode exec`
+* **Step Attempting:** Formulating the input payload for `github.issue.create` execution.
+* **Command / Action:** `swytchcode info github.issue.create`
+* **What I Expected:** Flat arguments (e.g., `--owner OWNER --repo REPO --title "..." --body "..."`).
+* **What Actually Happened:** `swytchcode info` reveals that `owner` and `repo` are path parameters (strings), whereas `body` is an object containing `title` (required) and `body` (optional string, markdown). Passing flat arguments or mismatched nesting produces a schema validation error before execution.
+* **Next Step / AI Action:** Structured the JSON payload with proper nesting:
+  ```json
+  {
+    "tool": "github.issue.create",
+    "args": {
+      "owner": "OWNER",
+      "repo": "REPO",
+      "body": {
+        "title": "Issue title",
+        "body": "Markdown body content"
+      }
+    }
+  }
+  ```
+* **Status / Resolution:** Implemented nested structure in `netra.py` and validated schema acceptance.
+
+---
+
+### Entry 9: Interactive Stdin Blocking in Unattended CLI & Subprocess Execution
+* **Step Attempting:** Invoking `swytchcode exec` programmatically from Python `subprocess.run()`.
+* **Command / Action:** `swytchcode exec github.issue.create --dry-run --input owner=... --input repo=... --body '{"title":"..."}'`
+* **What I Expected:** The CLI to run deterministically and non-interactively in automated subshells.
+* **What Actually Happened:** When credentials are missing, the command prompts interactively on standard input:
+  `Missing credentials for GitHub. Connect now? [Y/n] `
+  This hangs automated pipelines and parent processes indefinitely waiting for TTY response.
+* **Next Step / AI Action:** Consulted `skills.md` for headless invocation syntax. Piping JSON directly over standard input:
+  `echo '{"tool":"github.issue.create","args":{...}}' | swytchcode exec`
+  runs purely non-interactively and does not hang on terminal prompts.
+* **Status / Resolution:** Implemented JSON stdin piping in `netra.py` via `subprocess.run(["swytchcode", "exec"], input=json.dumps(payload), text=True, capture_output=True)`.
+
+---
+
+### Entry 10: Structured Auth Failure Contract and Exit Code 3
+* **Step Attempting:** Handling the failure path when dispatching an issue without configured GitHub credentials.
+* **Command / Action:** Executed `swytchcode exec` with a valid JSON payload when GitHub OAuth/token is not connected.
+* **What I Expected:** A generic exit code 1 or unparsed error.
+* **What Actually Happened:** Swytchcode cleanly returned exit code `3` and emitted structured JSON to stderr:
+  ```json
+  {"error":"missing credentials for GitHub - run `swytchcode auth connect GitHub`","category":"auth","suggested_action":"to access registry features, run: swytchcode login - local execution works without auth","reference_id":"SWY-ERR-CB7193"}
+  ```
+* **Next Step / AI Action:** Verified that exit code 3 is Swytchcode's designated auth failure code. Configured `netra.py` to propagate this exit code and display the exact troubleshooting command (`swytchcode auth connect GitHub`).
+* **Status / Resolution:** Clear, deterministic failure handling without masking errors or crashing.
+
+---
+
+### Entry 11: Telemetry Noise Leakage in Subprocess Stderr Output
+* **Step Attempting:** Capturing and presenting failure diagnostics from `swytchcode exec` when invoked as a subprocess from Python.
+* **Command / Action:** `subprocess.run(["swytchcode", "exec"], input=json.dumps(payload), text=True, capture_output=True)`
+* **What I Expected:** `proc.stderr` to contain either clean human-readable diagnostic messages or the exact JSON failure object.
+* **What Actually Happened:** In addition to the JSON error payload, `stderr` contained mixed timestamped runner logs and unsuppressed PostHog telemetry shutdown warnings:
+  ```text
+  2026/11/02 20:58:02 [swytchcode exec] request tool=github.issue.create ...
+  {"error":"missing credentials for GitHub - run `swytchcode auth connect GitHub`", ...}
+  posthog 2026/11/02 20:58:03 WARN: shutdown timeout: 1 batches still in flight
+  posthog 2026/11/02 20:58:03 WARN: shutdown timeout exceeded, some messages may be lost
+  ```
+  Dumping `stderr` directly into user terminal output exposed confusing telemetry messages to end-users.
+* **Next Step / AI Action:** Inspected the output stream format. Identified that Swytchcode outputs structured JSON error objects as discrete lines within stderr.
+* **Status / Resolution:** Implemented structured JSON line parsing in `netra.py` (`dispatch_swytchcode_issue`). When an execution failure occurs, NETRA parses the structured JSON payload to extract `error`, `suggested_action`, and `reference_id`, suppressing raw internal telemetry logs while preserving crisp diagnostic messages.
+

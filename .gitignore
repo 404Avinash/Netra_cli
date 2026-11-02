@@ -1,1 +1,6 @@
 .swytchcode/workspace.json
+baselines/*.json
+!baselines/baseline.example.json
+__pycache__/
+*.pyc
+.pytest_cache/

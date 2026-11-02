@@ -1,0 +1,34 @@
+{
+  "target": "https://example.com",
+  "saved_at": "2026-11-02T20:00:00Z",
+  "reviewed": true,
+  "redirect": {
+    "status": "pass",
+    "details": "HTTP 301 redirects to HTTPS: https://example.com/"
+  },
+  "tls": {
+    "status": "pass",
+    "days_remaining": 88,
+    "expiry": "2027-01-30T12:00:00Z",
+    "issuer": "DigiCert Global Root G2",
+    "details": "Valid certificate (88 days left, expires 2027-01-30T12:00:00Z, issuer: DigiCert Global Root G2)"
+  },
+  "headers": {
+    "Strict-Transport-Security": {
+      "status": "present",
+      "value": "max-age=31536000; includeSubDomains; preload"
+    },
+    "Content-Security-Policy": {
+      "status": "present",
+      "value": "default-src 'self'; frame-ancestors 'none';"
+    },
+    "X-Content-Type-Options": {
+      "status": "present",
+      "value": "nosniff"
+    },
+    "Referrer-Policy": {
+      "status": "present",
+      "value": "strict-origin-when-cross-origin"
+    }
+  }
+}

@@ -2,7 +2,8 @@
 
 > **Submission:** Swytchcode PPI Assessment  
 > **Author:** Avinash  
-> **Repository:** https://github.com/avinash/netra-cli  
+> **Repository:** https://github.com/404Avinash/Netra_cli  
+> **Live Demonstrated Issue:** https://github.com/404Avinash/Netra_cli/issues/1  
 > **Submission Date:** November 2026  
 
 ---
@@ -165,16 +166,23 @@ Body:
 Security controls that were previously configured and verified have degraded. Review the recommendations above and update the web server configuration.
 
 ---
-*Dispatched automatically by [NETRA_CLI](https://github.com/avinash/netra-cli) via Swytchcode Execution Authority Kernel.*
+*Dispatched automatically by [NETRA_CLI](https://github.com/404Avinash/Netra_cli) via Swytchcode Execution Authority Kernel.*
 ================================================================================
 Run with --confirm to dispatch this issue to GitHub via Swytchcode:
-  netra notify --target https://example.com --repo avinash/netra-demo --confirm
+  netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
 ```
 
 ### E. Dispatch via Swytchcode Kernel (`netra notify --confirm`)
+When executed with connected GitHub OAuth credentials, Swytchcode dispatches the live issue:
+```text
+$ python3 netra.py notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
+✔ Issue created successfully via Swytchcode!
+```
+*Live Issue:* https://github.com/404Avinash/Netra_cli/issues/1
+
 When executed without GitHub OAuth credentials configured, Swytchcode returns exit code `3` and structured error output:
 ```text
-$ python3 netra.py notify --target https://example.com --repo avinash/netra-demo --confirm
+$ python3 netra.py notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
 Swytchcode execution failed with exit code 3:
 Error: missing credentials for GitHub - run `swytchcode auth connect GitHub`
 Suggested Action: to access registry features, run: swytchcode login - local execution works without auth

@@ -12,7 +12,7 @@
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
-![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **NETRA_CLI** is a lightweight, zero-dependency **Local Laptop Network & Threat Guardian** and **Remote Perimeter Security Auditor**. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
@@ -457,7 +457,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 ```text
-Ran 69 tests in 0.274s
+Ran 77 tests in 0.312s
 
 OK
 ```

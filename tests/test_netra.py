@@ -1258,7 +1258,162 @@ class TestHostSecurityAndNetworkGuardian(unittest.TestCase):
         self.assertIn("Exposed Port 0.0.0.0:6379", body)
         self.assertIn("Swytchcode", body)
 
+    def test_categorize_exposure_ipv6_mapped_and_lan_services(self):
+        # IPv4-mapped IPv6 loopback should be LOCAL
+        self.assertEqual(netra.categorize_exposure("::ffff:127.0.0.1"), "LOCAL")
+        self.assertEqual(netra.categorize_exposure("[::ffff:127.0.0.1]"), "LOCAL")
+        # Full 172.16.0.0/12 private range identified as LAN
+        self.assertEqual(netra.identify_connection_service("172.25.0.1", 8080), "Local Network (LAN)")
+        self.assertEqual(netra.identify_connection_service("172.31.255.254", 3000), "Local Network (LAN)")
+        # Link-local IPv6 identified as LAN
+        self.assertEqual(netra.identify_connection_service("fe80::1", 5353), "Local Network (LAN)")
+
+    def test_parse_proc_net_sockets_fallback_ipv6_and_inodes(self):
+        # /proc/net/tcp6 line with ::ffff:127.0.0.1:8080 (port 8080 = 0x1F90), inode 99999
+        tcp6_content = (
+            "  sl  local_address                         rem_address                            st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+            "   0: 0000000000000000FFFF00000100007F:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 99999 1 0000000000000000 100 0 0 10 0\n"
+        )
+        fake_inode_map = {"99999": [{"name": "node", "pid": 4321}]}
+        def fake_open(filename, *args, **kwargs):
+            if filename == "/proc/net/tcp6":
+                return io.StringIO(tcp6_content)
+            return io.StringIO("")
+
+        with patch("os.path.exists", side_effect=lambda p: p == "/proc/net/tcp6"), \
+             patch("builtins.open", side_effect=fake_open), \
+             patch("netra.get_proc_inode_map", return_value=fake_inode_map):
+            l_ports, e_conns, o_conns = netra.parse_proc_net_sockets()
+            self.assertEqual(len(l_ports), 1)
+            lp = l_ports[0]
+            self.assertEqual(lp["port"], 8080)
+            self.assertEqual(lp["exposure"], "LOCAL")
+            self.assertEqual(lp["processes"], [{"name": "node", "pid": 4321}])
+
+    def test_format_host_observation_table_multi_threats_and_empty_conns(self):
+        obs = {
+            "hostname": "test-box",
+            "ip": "10.0.0.2",
+            "network": {"primary_interface": "lo", "rx_bytes": 0, "tx_bytes": 0},
+            "score": 40,
+            "grade": "F",
+            "score_bar": "█" * 8 + "░" * 12,
+            "listening_ports": [],
+            "established_connections": [],  # 0 connections
+            "threats": [
+                {"category": "Suspicious Listener :4444", "severity": "CRITICAL", "details": "Port 4444 active"},
+                {"category": "Plaintext Outbound Traffic", "severity": "MEDIUM", "details": "Unencrypted outbound traffic to 93.184.216.34:80"},
+            ],
+            "hygiene": {
+                "ssh_keys": {"status": "FAIL", "issues": ["Private key 'id_rsa' has unsafe permissions 644"]},
+                "workspace_secrets": {"status": "FAIL", "issues": ["Secret file '.env' is NOT ignored in .gitignore"]},
+            },
+        }
+        output = netra.format_host_observation_table(obs)
+        # Verify both threats are rendered
+        self.assertIn("Suspicious Listener :4444", output)
+        self.assertIn("Plaintext Outbound Traffic", output)
+        # Verify 0 connections message is clean
+        self.assertIn("Outbound Conns (0)", output)
+        self.assertIn("No active outbound connections", output)
+        # Verify both hygiene failure rows are rendered
+        self.assertIn("SSH Key Hygiene", output)
+        self.assertIn("Workspace Secrets", output)
+
+    def test_save_baseline_verbose_false(self):
+        obs = {
+            "target": "localhost",
+            "type": "host",
+            "hostname": "test-box",
+            "listening_ports": [],
+            "threats": [],
+            "hygiene": {},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            filepath = Path(td) / "localhost.json"
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                success = netra.save_baseline(obs, filepath=filepath, auto_confirm=True, verbose=False)
+                self.assertTrue(success)
+                self.assertTrue(filepath.exists())
+                self.assertEqual(mock_stdout.getvalue(), "")
+
+    def test_workspace_secrets_hygiene_subdirectories_and_non_git(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws_dir = Path(tmpdir)
+            subdir = ws_dir / "backend"
+            subdir.mkdir()
+            sub_env = subdir / ".env.local"
+            sub_env.write_text("API_KEY=xyz")
+            sub_env.chmod(0o644)
+
+            # In a non-git directory without .gitignore, flags unsafe world permissions
+            res = netra.inspect_workspace_secrets_hygiene(ws_dir)
+            self.assertEqual(res["status"], "FAIL")
+            self.assertTrue(any(".env.local" in issue for issue in res["issues"]))
+
+
+class TestCursesTerminalRadar(unittest.TestCase):
+    """Test curses terminal radar rendering, window dimension boundaries, and hotkeys."""
+
+    def test_curses_host_main_renders_and_quits(self):
+        mock_stdscr = MagicMock()
+        mock_stdscr.getmaxyx.return_value = (24, 80)
+        mock_stdscr.getch.side_effect = [ord("q")]
+
+        with patch("netra.inspect_local_host") as mock_inspect:
+            mock_inspect.return_value = {
+                "hostname": "test-host",
+                "ip": "127.0.0.1",
+                "score": 90,
+                "grade": "A",
+                "score_bar": "█" * 18 + "░" * 2,
+                "network": {"primary_interface": "lo", "rx_bytes": 100, "tx_bytes": 100, "rx_rate_bps": 10, "tx_rate_bps": 10},
+                "listening_ports": [
+                    {"port": 8000, "proto": "tcp", "bind_address": "127.0.0.1", "exposure": "LOCAL", "severity": "INFO", "service": "Dev Server", "processes": []}
+                ],
+                "established_connections": [],
+            }
+            ret = netra.curses_host_main(mock_stdscr, interval=1.0, max_frames=1)
+            self.assertEqual(ret, 0)
+            self.assertTrue(mock_stdscr.refresh.called)
+            addstr_calls = [c[0][2] for c in mock_stdscr.addstr.call_args_list if len(c[0]) >= 3]
+            self.assertTrue(any("NETRA HOST RADAR" in str(txt) for txt in addstr_calls))
+
+    def test_curses_host_main_small_terminal_resilience(self):
+        mock_stdscr = MagicMock()
+        mock_stdscr.getmaxyx.return_value = (15, 60)  # Too small (< 76x22)
+        mock_stdscr.getch.side_effect = [ord("q")]
+
+        ret = netra.curses_host_main(mock_stdscr, interval=1.0, max_frames=1)
+        self.assertEqual(ret, 0)
+        addstr_calls = [c[0][2] for c in mock_stdscr.addstr.call_args_list if len(c[0]) >= 3]
+        self.assertTrue(any("Terminal size too small" in str(txt) for txt in addstr_calls))
+
+    def test_curses_host_main_hotkeys_refresh_and_save(self):
+        mock_stdscr = MagicMock()
+        mock_stdscr.getmaxyx.return_value = (24, 80)
+        mock_stdscr.getch.side_effect = [ord("r"), ord("s"), ord("q")]
+
+        with patch("netra.inspect_local_host") as mock_inspect, \
+             patch("netra.save_baseline") as mock_save:
+            mock_inspect.return_value = {
+                "hostname": "test-host",
+                "ip": "127.0.0.1",
+                "score": 100,
+                "grade": "A+",
+                "score_bar": "█" * 20,
+                "network": {"primary_interface": "lo", "rx_bytes": 0, "tx_bytes": 0, "rx_rate_bps": 0, "tx_rate_bps": 0},
+                "listening_ports": [],
+                "established_connections": [],
+            }
+            ret = netra.curses_host_main(mock_stdscr, interval=1.0, max_frames=3)
+            self.assertEqual(ret, 0)
+            self.assertTrue(mock_save.called)
+            save_kwargs = mock_save.call_args[1]
+            self.assertFalse(save_kwargs.get("verbose", True))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

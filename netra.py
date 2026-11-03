@@ -10,6 +10,7 @@ security drift/regressions, and dispatches issue alerts via Swytchcode's executi
 import argparse
 import datetime
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -201,35 +202,53 @@ def split_addr_port(addr_port: str) -> tuple[str, int]:
 def categorize_exposure(bind_addr: str) -> str:
     """Categorize a bind address as EXPOSED (all interfaces/LAN) or LOCAL (loopback)."""
     clean = bind_addr.strip("[]").lower()
+    if "%" in clean:
+        clean = clean.split("%")[0]
     if clean in ("0.0.0.0", "*", "::", "::0"):
         return "EXPOSED"
-    if clean.startswith("127.") or clean in ("::1", "localhost"):
+    if clean in ("127.0.0.1", "::1", "localhost"):
         return "LOCAL"
+    if clean.startswith("127.") or clean.startswith("::ffff:127."):
+        return "LOCAL"
+    try:
+        ip_obj = ipaddress.ip_address(clean)
+        if ip_obj.is_loopback:
+            return "LOCAL"
+    except ValueError:
+        pass
     return "EXPOSED"
 
 
 def identify_connection_service(remote_ip: str, remote_port: int) -> str:
     """Identify destination service or provider from remote IP and port."""
-    if remote_ip.startswith("127.") or remote_ip in ("::1", "localhost"):
-        return "Local Loopback (IPC)"
-    if (
-        remote_ip.startswith("192.168.")
-        or remote_ip.startswith("10.")
-        or remote_ip.startswith("172.16.")
-        or remote_ip.startswith("172.17.")
-        or remote_ip.startswith("172.18.")
-        or remote_ip.startswith("172.19.")
-    ):
-        return "Local Network (LAN)"
+    clean_ip = remote_ip.strip("[]").lower()
+    if "%" in clean_ip:
+        clean_ip = clean_ip.split("%")[0]
+
+    try:
+        ip_obj = ipaddress.ip_address(clean_ip)
+        if ip_obj.is_loopback or clean_ip == "localhost":
+            return "Local Loopback (IPC)"
+        if ip_obj.is_private or ip_obj.is_link_local:
+            return "Local Network (LAN)"
+    except ValueError:
+        if clean_ip.startswith("127.") or clean_ip in ("::1", "localhost"):
+            return "Local Loopback (IPC)"
+        if (
+            clean_ip.startswith("192.168.")
+            or clean_ip.startswith("10.")
+            or clean_ip.startswith("172.")
+        ):
+            return "Local Network (LAN)"
 
     if remote_port == 443:
-        if remote_ip.startswith("140.82."):
+        if clean_ip.startswith("140.82."):
             return "GitHub (TLS)"
-        if remote_ip.startswith("34.") or remote_ip.startswith("35.") or remote_ip.startswith("142.250.") or remote_ip.startswith("172.217."):
+        if clean_ip.startswith("34.") or clean_ip.startswith("35.") or clean_ip.startswith("142.250.") or clean_ip.startswith("172.217."):
             return "Google Cloud (TLS)"
-        if remote_ip.startswith("104.") or remote_ip.startswith("172.67."):
+        if clean_ip.startswith("104.") or clean_ip.startswith("172.67."):
             return "Cloudflare (TLS)"
-        if remote_ip.startswith("3.") or remote_ip.startswith("52.") or remote_ip.startswith("54."):
+        if clean_ip.startswith("3.") or clean_ip.startswith("52.") or clean_ip.startswith("54."):
             return "AWS (TLS)"
         return "Encrypted HTTPS"
     elif remote_port == 80:
@@ -377,7 +396,7 @@ def parse_ss_sockets(ss_output: str) -> tuple[list[dict], list[dict], list[dict]
         local_ap = parts[4]
         peer_ap = parts[5]
 
-        proc_matches = re.findall(r'\("([^"]+)",pid=(\d+)', line_s)
+        proc_matches = re.findall(r'\("?([^",\)]+?)"?,pid=(\d+)', line_s)
         processes = [{"name": name, "pid": int(pid)} for name, pid in proc_matches]
 
         local_addr, local_port = split_addr_port(local_ap)
@@ -457,12 +476,55 @@ def parse_ss_sockets(ss_output: str) -> tuple[list[dict], list[dict], list[dict]
     return listening_ports, established_conns, other_conns
 
 
+def get_proc_inode_map() -> dict[str, list[dict]]:
+    """Build a mapping of socket inode -> list of {name, pid} by inspecting /proc/*/fd."""
+    inode_map: dict[str, list[dict]] = {}
+    proc_root = Path("/proc")
+    if not proc_root.exists() or not proc_root.is_dir():
+        return inode_map
+
+    try:
+        p_dirs = [p for p in proc_root.iterdir() if p.is_dir() and p.name.isdigit()]
+    except (OSError, PermissionError):
+        return inode_map
+
+    for p_dir in p_dirs:
+        try:
+            pid = int(p_dir.name)
+        except ValueError:
+            continue
+        try:
+            comm_file = p_dir / "comm"
+            comm = comm_file.read_text(encoding="utf-8").strip() if comm_file.exists() else f"pid-{pid}"
+        except Exception:
+            comm = f"pid-{pid}"
+
+        fd_dir = p_dir / "fd"
+        try:
+            for fd_link in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd_link)
+                    if target.startswith("socket:[") and target.endswith("]"):
+                        inode = target[8:-1]
+                        if inode not in inode_map:
+                            inode_map[inode] = []
+                        if not any(pr["pid"] == pid for pr in inode_map[inode]):
+                            inode_map[inode].append({"name": comm, "pid": pid})
+                except (OSError, PermissionError):
+                    continue
+        except (OSError, PermissionError):
+            continue
+
+    return inode_map
+
+
 def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
     """Pure Python fallback for Linux inspecting /proc/net/tcp, tcp6, udp, udp6."""
     listening_ports = []
     established_conns = []
     other_conns = []
     seen = set()
+    inode_map = get_proc_inode_map()
 
     def hex_to_ipv4(h: str) -> str:
         try:
@@ -470,6 +532,16 @@ def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
             return f"{b[3]}.{b[2]}.{b[1]}.{b[0]}"
         except Exception:
             return h
+
+    def hex_to_ipv6(h: str) -> str:
+        try:
+            raw_bytes = bytes.fromhex(h)
+            if len(raw_bytes) != 16:
+                return "::"
+            words = [raw_bytes[i : i + 4][::-1] for i in range(0, 16, 4)]
+            return socket.inet_ntop(socket.AF_INET6, b"".join(words))
+        except Exception:
+            return "::"
 
     files = [
         ("/proc/net/tcp", "tcp"),
@@ -494,6 +566,8 @@ def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
             local_raw = parts[1]
             rem_raw = parts[2]
             st_raw = parts[3]
+            inode_str = parts[9] if len(parts) > 9 else ""
+            processes = list(inode_map.get(inode_str, []))
 
             if ":" not in local_raw:
                 continue
@@ -508,17 +582,17 @@ def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
 
             if len(loc_ip_h) == 8:
                 loc_ip = hex_to_ipv4(loc_ip_h)
-            elif loc_ip_h == "00000000000000000000000000000000":
-                loc_ip = "::"
-            elif loc_ip_h == "00000000000000000000000001000000":
-                loc_ip = "::1"
+            elif len(loc_ip_h) == 32:
+                loc_ip = hex_to_ipv6(loc_ip_h)
             else:
-                loc_ip = "::"
+                loc_ip = "0.0.0.0"
 
             if len(rem_ip_h) == 8:
                 rem_ip = hex_to_ipv4(rem_ip_h)
+            elif len(rem_ip_h) == 32:
+                rem_ip = hex_to_ipv6(rem_ip_h)
             else:
-                rem_ip = "0.0.0.0" if rem_ip_h == "00000000000000000000000000000000" else "::"
+                rem_ip = "0.0.0.0"
 
             is_tcp_listen = (proto == "tcp" and st_raw == "0A")
             is_udp_listen = (
@@ -551,8 +625,20 @@ def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
                         "exposure": exposure,
                         "service": svc,
                         "severity": sev,
-                        "processes": [],
+                        "processes": processes,
                     })
+                else:
+                    for existing in listening_ports:
+                        if (
+                            existing["proto"] == proto
+                            and existing["port"] == loc_port
+                            and existing["exposure"] == exposure
+                        ):
+                            existing_pids = {p["pid"] for p in existing["processes"]}
+                            for pr in processes:
+                                if pr["pid"] not in existing_pids:
+                                    existing["processes"].append(pr)
+                                    existing_pids.add(pr["pid"])
             elif st_raw == "01":
                 svc = identify_connection_service(rem_ip, rem_port)
                 established_conns.append({
@@ -563,7 +649,7 @@ def parse_proc_net_sockets() -> tuple[list[dict], list[dict], list[dict]]:
                     "remote_ip": rem_ip,
                     "remote_port": rem_port,
                     "status": "ESTAB",
-                    "processes": [],
+                    "processes": processes,
                     "service": svc,
                 })
 
@@ -637,29 +723,55 @@ def inspect_workspace_secrets_hygiene(workspace_dir: Path | None = None) -> dict
             if f.is_file() and not f.name.endswith((".example", ".sample", ".template", ".md", ".txt")):
                 env_files.append(f)
 
+    # Also scan immediate subdirectories (e.g. backend/.env, client/.env.local)
+    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", ".tox", "dist", "build"}
+    try:
+        for child in workspace_dir.iterdir():
+            if child.is_dir() and child.name not in skip_dirs and not child.name.startswith("."):
+                for pattern in (".env", ".env.*"):
+                    for f in child.glob(pattern):
+                        if f.is_file() and not f.name.endswith((".example", ".sample", ".template", ".md", ".txt")):
+                            env_files.append(f)
+    except Exception:
+        pass
+
     for ef in env_files:
         try:
+            rel_path = ef.relative_to(workspace_dir).as_posix()
+        except ValueError:
+            rel_path = ef.name
+
+        try:
             res_tracked = subprocess.run(
-                ["git", "ls-files", "--error-unmatch", ef.name],
+                ["git", "ls-files", "--error-unmatch", rel_path],
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,
             )
             if res_tracked.returncode == 0:
-                issues.append(f"Secret file '{ef.name}' is actively TRACKED in git repository!")
+                issues.append(f"Secret file '{rel_path}' is actively TRACKED in git repository!")
                 continue
         except Exception:
             pass
 
         try:
             res_ignored = subprocess.run(
-                ["git", "check-ignore", ef.name],
+                ["git", "check-ignore", rel_path],
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,
             )
-            if res_ignored.returncode != 0:
-                issues.append(f"Secret file '{ef.name}' is NOT ignored in .gitignore")
+            if res_ignored.returncode == 1:
+                issues.append(f"Secret file '{rel_path}' is NOT ignored in .gitignore")
+            elif res_ignored.returncode == 128:
+                local_gi = workspace_dir / ".gitignore"
+                if local_gi.exists():
+                    try:
+                        content = local_gi.read_text(encoding="utf-8")
+                        if not any(p in content for p in (".env", ef.name, rel_path)):
+                            issues.append(f"Secret file '{rel_path}' is NOT listed in .gitignore")
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -667,7 +779,7 @@ def inspect_workspace_secrets_hygiene(workspace_dir: Path | None = None) -> dict
             st = ef.stat()
             if (st.st_mode & stat.S_IROTH) or (st.st_mode & stat.S_IWOTH):
                 issues.append(
-                    f"Secret file '{ef.name}' has unsafe world permissions ({oct(st.st_mode & 0o777)[2:]})"
+                    f"Secret file '{rel_path}' has unsafe world permissions ({oct(st.st_mode & 0o777)[2:]})"
                 )
         except Exception:
             pass
@@ -928,7 +1040,7 @@ def format_host_observation_table(obs: dict) -> str:
             sev_col = ANSI_RED + ANSI_BOLD if sev in ("CRITICAL", "HIGH") else ANSI_YELLOW + ANSI_BOLD
             procs = p.get("processes", [])
             proc_desc = f" ({procs[0]['name']})" if procs else ""
-            det_desc = f"{p.get('service')}{proc_desc} bound to all interfaces"
+            det_desc = f"{p.get('service')}{proc_desc} bound to {b_addr}"
             add_row(port_label, "EXPOSED", ANSI_RED + ANSI_BOLD, sev, sev_col, det_desc)
     else:
         pass_count += 1
@@ -946,7 +1058,10 @@ def format_host_observation_table(obs: dict) -> str:
     # 3. Established Outbound Connections
     e_conns = obs.get("established_connections", [])
     plain_cnt = sum(1 for c in e_conns if c.get("remote_port") in (80, 21, 23))
-    if plain_cnt > 0:
+    if len(e_conns) == 0:
+        pass_count += 1
+        add_row("Outbound Conns (0)", "NORMAL", ANSI_GREEN + ANSI_BOLD, "INFO", ANSI_BLUE, "No active outbound connections")
+    elif plain_cnt > 0:
         warn_count += 1
         add_row(f"Outbound Conns ({len(e_conns)})", "WARN", ANSI_YELLOW + ANSI_BOLD, "MEDIUM", ANSI_YELLOW + ANSI_BOLD, f"{plain_cnt} unencrypted connection(s) active")
     else:
@@ -958,11 +1073,12 @@ def format_host_observation_table(obs: dict) -> str:
     # 4. Malicious / Backdoor Radar
     threats = obs.get("threats", [])
     if threats:
-        risk_count += len(threats)
-        t = threats[0]
-        sev = t.get("severity", "HIGH")
-        sev_col = ANSI_RED + ANSI_BOLD if sev in ("CRITICAL", "HIGH") else ANSI_YELLOW + ANSI_BOLD
-        add_row("Malicious / Backdoor Radar", "ALERT", ANSI_RED + ANSI_BOLD, sev, sev_col, t.get("details", "Threat identified"))
+        for t in threats:
+            risk_count += 1
+            sev = t.get("severity", "HIGH")
+            sev_col = ANSI_RED + ANSI_BOLD if sev in ("CRITICAL", "HIGH") else ANSI_YELLOW + ANSI_BOLD
+            cat = t.get("category", "Threat Radar")
+            add_row(cat, "ALERT", ANSI_RED + ANSI_BOLD, sev, sev_col, t.get("details", "Threat identified"))
     else:
         pass_count += 1
         add_row("Malicious / Backdoor Radar", "CLEAN", ANSI_GREEN + ANSI_BOLD, "INFO", ANSI_BLUE, "0 C2/miner ports, 0 SYN floods, 0 plaintext")
@@ -972,10 +1088,16 @@ def format_host_observation_table(obs: dict) -> str:
     ssh_st = hygiene.get("ssh_keys", {}).get("status", "PASS")
     sec_st = hygiene.get("workspace_secrets", {}).get("status", "PASS")
     if ssh_st == "FAIL" or sec_st == "FAIL":
-        risk_count += 1
-        issues = hygiene.get("ssh_keys", {}).get("issues", []) + hygiene.get("workspace_secrets", {}).get("issues", [])
-        issue_str = issues[0] if issues else "Unsafe permissions or unignored secrets"
-        add_row("Workspace & SSH Hygiene", "FAIL", ANSI_RED + ANSI_BOLD, "HIGH" if ssh_st == "FAIL" else "MEDIUM", ANSI_RED + ANSI_BOLD, issue_str)
+        if ssh_st == "FAIL":
+            risk_count += 1
+            ssh_issues = hygiene.get("ssh_keys", {}).get("issues", [])
+            s_det = ssh_issues[0] if ssh_issues else "SSH private keys have unsafe permissions"
+            add_row("SSH Key Hygiene", "FAIL", ANSI_RED + ANSI_BOLD, "HIGH", ANSI_RED + ANSI_BOLD, s_det)
+        if sec_st == "FAIL":
+            risk_count += 1
+            sec_issues = hygiene.get("workspace_secrets", {}).get("issues", [])
+            w_det = sec_issues[0] if sec_issues else "Unignored or tracked secrets in workspace"
+            add_row("Workspace Secrets", "FAIL", ANSI_RED + ANSI_BOLD, "MEDIUM", ANSI_YELLOW + ANSI_BOLD, w_det)
     else:
         pass_count += 1
         add_row("Workspace & SSH Hygiene", "PASS", ANSI_GREEN + ANSI_BOLD, "INFO", ANSI_BLUE, "SSH keys 0600, no untracked .env leaks")
@@ -1190,6 +1312,264 @@ def generate_host_issue_content(diff: dict) -> tuple[str, str]:
 
 def run_host_top_dashboard(interval: float = 3.0) -> int:
     """Launch interactive btop-style curses terminal monitoring dashboard for local host."""
+def curses_host_main(stdscr, interval: float = 3.0, max_frames: int | None = None) -> int:
+    """Interactive btop-style curses loop for local host radar monitoring."""
+    try:
+        import curses
+    except ImportError:
+        return 1
+
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+
+    stdscr.nodelay(True)
+    stdscr.timeout(500)
+    has_colors = False
+    try:
+        has_colors = curses.has_colors()
+    except curses.error:
+        has_colors = False
+
+    if has_colors:
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+        except curses.error:
+            pass
+        curses.init_pair(1, curses.COLOR_GREEN, -1)
+        curses.init_pair(2, curses.COLOR_RED, -1)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        curses.init_pair(4, curses.COLOR_CYAN, -1)
+        curses.init_pair(5, curses.COLOR_BLUE, -1)
+
+        col_pass = curses.color_pair(1) | curses.A_BOLD
+        col_fail = curses.color_pair(2) | curses.A_BOLD
+        col_warn = curses.color_pair(3) | curses.A_BOLD
+        col_cyan = curses.color_pair(4) | curses.A_BOLD
+        col_blue = curses.color_pair(5)
+    else:
+        col_pass = curses.A_BOLD
+        col_fail = curses.A_BOLD
+        col_warn = curses.A_NORMAL
+        col_cyan = curses.A_BOLD
+        col_blue = curses.A_NORMAL
+
+    last_poll = 0.0
+    obs = None
+    diff = None
+    status_msg = f"Host radar active (Refresh every {interval:.1f}s) | Press 'q' to quit"
+    status_msg_time = time.time()
+    frames = 0
+
+    while True:
+        frames += 1
+        if max_frames is not None and frames > max_frames:
+            break
+
+        now = time.time()
+        if obs is None or (now - last_poll >= interval):
+            last_poll = now
+            try:
+                obs = inspect_local_host(sample_duration=0.1)
+                filepath = get_baseline_filepath("localhost")
+                if filepath.exists():
+                    try:
+                        baseline = load_baseline(filepath)
+                        diff = compare_drift(baseline, obs)
+                    except Exception:
+                        diff = None
+                else:
+                    diff = None
+            except Exception as e:
+                obs = {
+                    "error": str(e),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                diff = None
+
+        max_y, max_x = stdscr.getmaxyx()
+        stdscr.erase()
+
+        if max_y < 22 or max_x < 76:
+            msg = f"Terminal size too small ({max_x}x{max_y}). Expand window to at least 76x22."
+            try:
+                stdscr.addstr(0, 0, msg[: max_x - 1], col_warn)
+            except curses.error:
+                pass
+        else:
+            def draw(y, x, text, attr=0):
+                if 0 <= y < max_y and 0 <= x < max_x:
+                    avail = max_x - 1 - x
+                    if avail > 0:
+                        try:
+                            stdscr.addstr(y, x, text[:avail], attr)
+                        except curses.error:
+                            pass
+
+            draw(0, 0, "┌" + "─" * (max_x - 2) + "┐")
+            h_name = obs.get("hostname", socket.gethostname())
+            h_ip = obs.get("ip", "127.0.0.1")
+            title_bar = f" NETRA HOST RADAR  ──  [Host: {h_name} | IP: {h_ip}] "
+            draw(0, 4, title_bar, col_cyan)
+
+            if "error" in obs:
+                draw(2, 2, f"Error inspecting host: {obs['error']}", col_fail)
+            else:
+                score = obs.get("score", 100)
+                grade = obs.get("grade", "A+")
+                bar = obs.get("score_bar", "█" * 20)
+                grade_color = (
+                    col_pass
+                    if grade in ("A+", "A")
+                    else (col_cyan if grade == "B" else (col_warn if grade == "C" else col_fail))
+                )
+                draw(2, 2, f"Security Score: [{bar}] {score}/100", curses.A_BOLD)
+                draw(2, 42, f"GRADE: {grade}", grade_color)
+
+                net = obs.get("network", {})
+                p_if = net.get("primary_interface", "lo")
+                rx_rate = format_rate(net.get("rx_rate_bps", 0.0))
+                tx_rate = format_rate(net.get("tx_rate_bps", 0.0))
+                rx_tot = format_bytes(net.get("rx_bytes", 0))
+                tx_tot = format_bytes(net.get("tx_bytes", 0))
+                draw(2, 58, f"If: {p_if} (▼{rx_tot}/▲{tx_tot})", col_blue)
+
+                rx_bps = net.get("rx_rate_bps", 0.0)
+                tx_bps = net.get("tx_rate_bps", 0.0)
+                rx_ratio = min(rx_bps / (1024 * 1024), 1.0)
+                tx_ratio = min(tx_bps / (1024 * 1024), 1.0)
+                g_len = 16
+                rx_filled = int(round(rx_ratio * g_len))
+                tx_filled = int(round(tx_ratio * g_len))
+                rx_bar = "█" * rx_filled + "░" * (g_len - rx_filled)
+                tx_bar = "█" * tx_filled + "░" * (g_len - tx_filled)
+                draw(3, 2, f"Bandwidth: ▼ RX [{rx_bar}] {rx_rate}   ▲ TX [{tx_bar}] {tx_rate}")
+
+                draw(4, 0, "├" + "─" * (max_x - 2) + "┤")
+                draw(5, 2, "EXPOSED & LISTENING PORTS (LAN EXPOSURE AUDIT)", col_cyan)
+                draw(
+                    6,
+                    2,
+                    f"{'PORT':<7} {'PROTO':<6} {'BIND ADDR':<16} {'EXPOSURE':<12} {'SEVERITY':<10} {'SERVICE / PROCESS':<30}",
+                    curses.A_BOLD,
+                )
+
+                l_ports = obs.get("listening_ports", [])
+                curr_y = 7
+                for lp in l_ports[:7]:
+                    port_str = str(lp.get("port", 0))
+                    proto_str = lp.get("proto", "tcp")
+                    b_addr = lp.get("bind_address", "0.0.0.0")
+                    exp_str = lp.get("exposure", "LOCAL")
+                    sev_str = lp.get("severity", "INFO")
+                    svc_str = lp.get("service", "Service")
+                    procs = lp.get("processes", [])
+                    proc_str = f" ({procs[0]['name']})" if procs else ""
+                    details_str = f"{svc_str}{proc_str}"
+
+                    exp_col = col_fail if exp_str == "EXPOSED" else col_pass
+                    sev_col = (
+                        col_fail
+                        if sev_str in ("CRITICAL", "HIGH")
+                        else (col_warn if sev_str == "MEDIUM" else col_blue)
+                    )
+                    draw(curr_y, 2, f"{port_str:<7} {proto_str:<6} {b_addr:<16}")
+                    draw(curr_y, 33, f"[{exp_str:^8}]", exp_col)
+                    draw(curr_y, 46, f"{sev_str:<10}", sev_col)
+                    draw(curr_y, 57, details_str[: max_x - 59])
+                    curr_y += 1
+
+                draw(curr_y, 0, "├" + "─" * (max_x - 2) + "┤")
+                curr_y += 1
+                draw(curr_y, 2, "ACTIVE PROCESS CONNECTIONS (ESTABLISHED)", col_cyan)
+                curr_y += 1
+                draw(
+                    curr_y,
+                    2,
+                    f"{'PROCESS (PID)':<22} {'LOCAL SOCKET':<24} {'REMOTE SOCKET':<24} {'SERVICE':<16}",
+                    curses.A_BOLD,
+                )
+                curr_y += 1
+
+                e_conns = obs.get("established_connections", [])
+                conn_limit = max(0, max_y - curr_y - 6)
+                for ec in e_conns[:conn_limit]:
+                    procs = ec.get("processes", [])
+                    p_name = f"{procs[0]['name']} ({procs[0]['pid']})" if procs else "-"
+                    l_sock = ec.get("local_address", "")
+                    r_sock = ec.get("remote_address", "")
+                    svc = ec.get("service", "")
+                    draw(curr_y, 2, f"{p_name:<22} {l_sock:<24} {r_sock:<24} {svc[: max_x - 74]}")
+                    curr_y += 1
+
+                draw(max_y - 5, 0, "├" + "─" * (max_x - 2) + "┤")
+                if diff is None:
+                    draw(
+                        max_y - 4,
+                        2,
+                        "Baseline: No laptop baseline locked yet. (Press 's' to lock baseline snapshot)",
+                        col_warn,
+                    )
+                else:
+                    saved_at = diff["baseline"].get("saved_at", "")[:19]
+                    if diff.get("drift_detected"):
+                        reg_cnt = len(diff.get("regressions", []))
+                        draw(
+                            max_y - 4,
+                            2,
+                            f"▲ BASELINE DRIFT DETECTED: {reg_cnt} regression(s) vs baseline saved {saved_at}",
+                            col_fail,
+                        )
+                    else:
+                        draw(
+                            max_y - 4,
+                            2,
+                            f"✔ BASELINE MATCH: All ports and host controls match baseline (saved {saved_at})",
+                            col_pass,
+                        )
+
+            draw(max_y - 3, 0, "├" + "─" * (max_x - 2) + "┤")
+            hotkeys = "HOTKEYS: [r] Refresh Now   [s] Save Laptop Baseline Snapshot   [q] Quit"
+            draw(max_y - 2, 2, hotkeys, curses.A_BOLD)
+
+            if time.time() - status_msg_time > 4.0:
+                status_msg = f"Live host monitoring active (interval: {interval:.1f}s) | Press 'q' to quit"
+            draw(max_y - 1, 2, status_msg, col_cyan)
+            draw(max_y - 1, 0, "└")
+            draw(max_y - 1, max_x - 1, "┘")
+
+        stdscr.refresh()
+
+        try:
+            ch = stdscr.getch()
+        except curses.error:
+            ch = -1
+
+        if ch in (ord("q"), ord("Q"), 27):
+            break
+        elif ch in (ord("r"), ord("R")):
+            status_msg = "Refreshing host telemetry..."
+            status_msg_time = time.time()
+            obs = None
+        elif ch in (ord("s"), ord("S")):
+            if obs and "error" not in obs:
+                filepath = get_baseline_filepath("localhost")
+                save_baseline(obs, filepath=filepath, auto_confirm=True, verbose=False)
+                try:
+                    baseline = load_baseline(filepath)
+                    diff = compare_drift(baseline, obs)
+                except Exception:
+                    pass
+                status_msg = f"✔ Laptop baseline snapshot saved to {filepath}!"
+                status_msg_time = time.time()
+
+    return 0
+
+
+def run_host_top_dashboard(interval: float = 3.0) -> int:
+    """Launch interactive btop-style curses terminal monitoring dashboard for local host."""
     if not sys.stdin.isatty():
         sys.stderr.write("Error: 'top' dashboard requires an interactive terminal (TTY).\n")
         return 1
@@ -1202,245 +1582,8 @@ def run_host_top_dashboard(interval: float = 3.0) -> int:
         )
         return 1
 
-    def curses_host_main(stdscr):
-        try:
-            curses.curs_set(0)
-        except curses.error:
-            pass
-
-        stdscr.nodelay(True)
-        stdscr.timeout(500)
-        if curses.has_colors():
-            curses.start_color()
-            try:
-                curses.use_default_colors()
-            except curses.error:
-                pass
-            curses.init_pair(1, curses.COLOR_GREEN, -1)
-            curses.init_pair(2, curses.COLOR_RED, -1)
-            curses.init_pair(3, curses.COLOR_YELLOW, -1)
-            curses.init_pair(4, curses.COLOR_CYAN, -1)
-            curses.init_pair(5, curses.COLOR_BLUE, -1)
-
-            col_pass = curses.color_pair(1) | curses.A_BOLD
-            col_fail = curses.color_pair(2) | curses.A_BOLD
-            col_warn = curses.color_pair(3) | curses.A_BOLD
-            col_cyan = curses.color_pair(4) | curses.A_BOLD
-            col_blue = curses.color_pair(5)
-        else:
-            col_pass = curses.A_BOLD
-            col_fail = curses.A_BOLD
-            col_warn = curses.A_NORMAL
-            col_cyan = curses.A_BOLD
-            col_blue = curses.A_NORMAL
-
-        last_poll = 0.0
-        obs = None
-        diff = None
-        status_msg = f"Host radar active (Refresh every {interval:.1f}s) | Press 'q' to quit"
-        status_msg_time = time.time()
-
-        while True:
-            now = time.time()
-            if obs is None or (now - last_poll >= interval):
-                last_poll = now
-                try:
-                    obs = inspect_local_host(sample_duration=0.1)
-                    filepath = get_baseline_filepath("localhost")
-                    if filepath.exists():
-                        try:
-                            baseline = load_baseline(filepath)
-                            diff = compare_drift(baseline, obs)
-                        except Exception:
-                            diff = None
-                    else:
-                        diff = None
-                except Exception as e:
-                    obs = {
-                        "error": str(e),
-                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    }
-                    diff = None
-
-            max_y, max_x = stdscr.getmaxyx()
-            stdscr.erase()
-
-            if max_y < 22 or max_x < 76:
-                msg = f"Terminal size too small ({max_x}x{max_y}). Expand window to at least 76x22."
-                try:
-                    stdscr.addstr(0, 0, msg[: max_x - 1], col_warn)
-                except curses.error:
-                    pass
-            else:
-                def draw(y, x, text, attr=0):
-                    if 0 <= y < max_y and 0 <= x < max_x:
-                        avail = max_x - 1 - x
-                        if avail > 0:
-                            try:
-                                stdscr.addstr(y, x, text[:avail], attr)
-                            except curses.error:
-                                pass
-
-                draw(0, 0, "┌" + "─" * (max_x - 2) + "┐")
-                h_name = obs.get("hostname", socket.gethostname())
-                h_ip = obs.get("ip", "127.0.0.1")
-                title_bar = f" NETRA HOST RADAR  ──  [Host: {h_name} | IP: {h_ip}] "
-                draw(0, 4, title_bar, col_cyan)
-
-                if "error" in obs:
-                    draw(2, 2, f"Error inspecting host: {obs['error']}", col_fail)
-                else:
-                    score = obs.get("score", 100)
-                    grade = obs.get("grade", "A+")
-                    bar = obs.get("score_bar", "█" * 20)
-                    grade_color = (
-                        col_pass
-                        if grade in ("A+", "A")
-                        else (col_cyan if grade == "B" else (col_warn if grade == "C" else col_fail))
-                    )
-                    draw(2, 2, f"Security Score: [{bar}] {score}/100", curses.A_BOLD)
-                    draw(2, 42, f"GRADE: {grade}", grade_color)
-
-                    net = obs.get("network", {})
-                    p_if = net.get("primary_interface", "lo")
-                    rx_rate = format_rate(net.get("rx_rate_bps", 0.0))
-                    tx_rate = format_rate(net.get("tx_rate_bps", 0.0))
-                    rx_tot = format_bytes(net.get("rx_bytes", 0))
-                    tx_tot = format_bytes(net.get("tx_bytes", 0))
-                    draw(2, 58, f"If: {p_if} (▼{rx_tot}/▲{tx_tot})", col_blue)
-
-                    rx_bps = net.get("rx_rate_bps", 0.0)
-                    tx_bps = net.get("tx_rate_bps", 0.0)
-                    rx_ratio = min(rx_bps / (1024 * 1024), 1.0)
-                    tx_ratio = min(tx_bps / (1024 * 1024), 1.0)
-                    g_len = 16
-                    rx_filled = int(round(rx_ratio * g_len))
-                    tx_filled = int(round(tx_ratio * g_len))
-                    rx_bar = "█" * rx_filled + "░" * (g_len - rx_filled)
-                    tx_bar = "█" * tx_filled + "░" * (g_len - tx_filled)
-                    draw(3, 2, f"Bandwidth: ▼ RX [{rx_bar}] {rx_rate}   ▲ TX [{tx_bar}] {tx_rate}")
-
-                    draw(4, 0, "├" + "─" * (max_x - 2) + "┤")
-                    draw(5, 2, "EXPOSED & LISTENING PORTS (LAN EXPOSURE AUDIT)", col_cyan)
-                    draw(
-                        6,
-                        2,
-                        f"{'PORT':<7} {'PROTO':<6} {'BIND ADDR':<16} {'EXPOSURE':<12} {'SEVERITY':<10} {'SERVICE / PROCESS':<30}",
-                        curses.A_BOLD,
-                    )
-
-                    l_ports = obs.get("listening_ports", [])
-                    curr_y = 7
-                    for lp in l_ports[:7]:
-                        port_str = str(lp.get("port", 0))
-                        proto_str = lp.get("proto", "tcp")
-                        b_addr = lp.get("bind_address", "0.0.0.0")
-                        exp_str = lp.get("exposure", "LOCAL")
-                        sev_str = lp.get("severity", "INFO")
-                        svc_str = lp.get("service", "Service")
-                        procs = lp.get("processes", [])
-                        proc_str = f" ({procs[0]['name']})" if procs else ""
-                        details_str = f"{svc_str}{proc_str}"
-
-                        exp_col = col_fail if exp_str == "EXPOSED" else col_pass
-                        sev_col = (
-                            col_fail
-                            if sev_str in ("CRITICAL", "HIGH")
-                            else (col_warn if sev_str == "MEDIUM" else col_blue)
-                        )
-                        draw(curr_y, 2, f"{port_str:<7} {proto_str:<6} {b_addr:<16}")
-                        draw(curr_y, 33, f"[{exp_str:^8}]", exp_col)
-                        draw(curr_y, 46, f"{sev_str:<10}", sev_col)
-                        draw(curr_y, 57, details_str[: max_x - 59])
-                        curr_y += 1
-
-                    draw(curr_y, 0, "├" + "─" * (max_x - 2) + "┤")
-                    curr_y += 1
-                    draw(curr_y, 2, "ACTIVE PROCESS CONNECTIONS (ESTABLISHED)", col_cyan)
-                    curr_y += 1
-                    draw(
-                        curr_y,
-                        2,
-                        f"{'PROCESS (PID)':<22} {'LOCAL SOCKET':<24} {'REMOTE SOCKET':<24} {'SERVICE':<16}",
-                        curses.A_BOLD,
-                    )
-                    curr_y += 1
-
-                    e_conns = obs.get("established_connections", [])
-                    for ec in e_conns[: max(1, max_y - curr_y - 6)]:
-                        procs = ec.get("processes", [])
-                        p_name = f"{procs[0]['name']} ({procs[0]['pid']})" if procs else "-"
-                        l_sock = ec.get("local_address", "")
-                        r_sock = ec.get("remote_address", "")
-                        svc = ec.get("service", "")
-                        draw(curr_y, 2, f"{p_name:<22} {l_sock:<24} {r_sock:<24} {svc[: max_x - 74]}")
-                        curr_y += 1
-
-                    draw(max_y - 4, 0, "├" + "─" * (max_x - 2) + "┤")
-                    if diff is None:
-                        draw(
-                            max_y - 3,
-                            2,
-                            "Baseline: No laptop baseline locked yet. (Press 's' to lock baseline snapshot)",
-                            col_warn,
-                        )
-                    else:
-                        saved_at = diff["baseline"].get("saved_at", "")[:19]
-                        if diff.get("drift_detected"):
-                            reg_cnt = len(diff.get("regressions", []))
-                            draw(
-                                max_y - 3,
-                                2,
-                                f"▲ BASELINE DRIFT DETECTED: {reg_cnt} regression(s) vs baseline saved {saved_at}",
-                                col_fail,
-                            )
-                        else:
-                            draw(
-                                max_y - 3,
-                                2,
-                                f"✔ BASELINE MATCH: All ports and host controls match baseline (saved {saved_at})",
-                                col_pass,
-                            )
-
-                draw(max_y - 2, 0, "├" + "─" * (max_x - 2) + "┤")
-                hotkeys = "HOTKEYS: [r] Refresh Now   [s] Save Laptop Baseline Snapshot   [q] Quit"
-                draw(max_y - 2, 2, hotkeys, curses.A_BOLD)
-
-                if time.time() - status_msg_time > 4.0:
-                    status_msg = f"Live host monitoring active (interval: {interval:.1f}s) | Press 'q' to quit"
-                draw(max_y - 1, 2, status_msg, col_cyan)
-                draw(max_y - 1, 0, "└")
-                draw(max_y - 1, max_x - 1, "┘")
-
-            stdscr.refresh()
-
-            try:
-                ch = stdscr.getch()
-            except curses.error:
-                ch = -1
-
-            if ch in (ord("q"), ord("Q"), 27):
-                break
-            elif ch in (ord("r"), ord("R")):
-                status_msg = "Refreshing host telemetry..."
-                status_msg_time = time.time()
-                obs = None
-            elif ch in (ord("s"), ord("S")):
-                if obs and "error" not in obs:
-                    filepath = get_baseline_filepath("localhost")
-                    save_baseline(obs, filepath=filepath, auto_confirm=True)
-                    try:
-                        baseline = load_baseline(filepath)
-                        diff = compare_drift(baseline, obs)
-                    except Exception:
-                        pass
-                    status_msg = f"✔ Laptop baseline snapshot saved to {filepath}!"
-                    status_msg_time = time.time()
-
-        return 0
-
     try:
-        curses.wrapper(curses_host_main)
+        curses.wrapper(lambda s: curses_host_main(s, interval=interval))
     except KeyboardInterrupt:
         pass
     return 0
@@ -1930,7 +2073,10 @@ def observe(target_url: str, timeout: float = 10.0) -> dict:
 
 # Baseline Engine
 def save_baseline(
-    observation: dict, filepath: Path | None = None, auto_confirm: bool = False
+    observation: dict,
+    filepath: Path | None = None,
+    auto_confirm: bool = False,
+    verbose: bool = True,
 ) -> bool:
     """
     Save an observation as a reviewed security baseline.
@@ -1942,7 +2088,8 @@ def save_baseline(
     if not auto_confirm:
         confirm_prompt = input(f"Save baseline for '{target}' to {filepath}? [y/N]: ").strip()
         if confirm_prompt.lower() not in ("y", "yes"):
-            print("Baseline save aborted by user.")
+            if verbose:
+                print("Baseline save aborted by user.")
             return False
 
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -1974,9 +2121,10 @@ def save_baseline(
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(baseline_payload, f, indent=2)
 
-    print(
-        color_text(f"✔ Baseline saved successfully to {filepath}", ANSI_GREEN + ANSI_BOLD)
-    )
+    if verbose:
+        print(
+            color_text(f"✔ Baseline saved successfully to {filepath}", ANSI_GREEN + ANSI_BOLD)
+        )
     return True
 
 
@@ -2274,7 +2422,7 @@ def generate_issue_content(target_url: str, diff: dict) -> tuple[str, str]:
             f"Security controls that were previously configured and verified have degraded. Review the recommendations above and update the web server configuration.",
             f"",
             f"---",
-            f"*Dispatched automatically by [NETRA_CLI](https://github.com/avinash/netra-cli) via Swytchcode Execution Authority Kernel.*",
+            f"*Dispatched automatically by [NETRA_CLI](https://github.com/404Avinash/Netra_cli) via Swytchcode Execution Authority Kernel.*",
         ]
     )
 
@@ -2543,7 +2691,13 @@ def run_top_dashboard(target: str, interval: float = 5.0, timeout: float = 10.0)
 
         stdscr.nodelay(True)
         stdscr.timeout(500)
-        if curses.has_colors():
+        has_colors = False
+        try:
+            has_colors = curses.has_colors()
+        except curses.error:
+            has_colors = False
+
+        if has_colors:
             curses.start_color()
             try:
                 curses.use_default_colors()
@@ -2735,7 +2889,7 @@ def run_top_dashboard(target: str, interval: float = 5.0, timeout: float = 10.0)
             elif ch in (ord('s'), ord('S')):
                 if obs and "error" not in obs:
                     filepath = get_baseline_filepath(target)
-                    save_baseline(obs, filepath=filepath, auto_confirm=True)
+                    save_baseline(obs, filepath=filepath, auto_confirm=True, verbose=False)
                     try:
                         baseline = load_baseline(filepath)
                         diff = compare_drift(baseline, obs)

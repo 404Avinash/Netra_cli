@@ -889,12 +889,29 @@ class TestCLIErgonomicsAndPositionalArgs(unittest.TestCase):
         self.assertEqual(args_base.target, "https://example.com")
         self.assertTrue(args_base.yes)
 
-    def test_missing_target_fails(self):
+    def test_missing_target_defaults_to_localhost(self):
         parser = netra.build_parser()
         for cmd_args in [["check"], ["top"], ["compare"], ["baseline", "save"]]:
-            with self.assertRaises(SystemExit) as ctx:
-                parser.parse_args(cmd_args)
-            self.assertEqual(ctx.exception.code, 2)
+            args = parser.parse_args(cmd_args)
+            self.assertEqual(args.target, "localhost")
+
+        args_notif = parser.parse_args(["notify", "--repo", "owner/repo"])
+        self.assertEqual(args_notif.target, "localhost")
+
+        # But notify still requires --repo
+        with self.assertRaises(SystemExit) as ctx:
+            parser.parse_args(["notify"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    @patch("netra.handle_check")
+    def test_bare_netra_defaults_to_localhost_check(self, mock_handle_check):
+        mock_handle_check.return_value = 0
+        ret = netra.main([])
+        self.assertEqual(ret, 0)
+        self.assertTrue(mock_handle_check.called)
+        args = mock_handle_check.call_args[0][0]
+        self.assertEqual(args.command, "check")
+        self.assertEqual(args.target, "localhost")
 
     @patch("netra.handle_check")
     def test_main_bare_domain_dispatch(self, mock_handle_check):
@@ -932,6 +949,314 @@ class TestCLIErgonomicsAndPositionalArgs(unittest.TestCase):
         self.assertEqual(args.command, "check")
         self.assertEqual(args.target, "https://example.com")
         self.assertTrue(args.json)
+
+
+class TestHostSecurityAndNetworkGuardian(unittest.TestCase):
+    """Test local host security, network telemetry, socket inspection, heuristics, and drift."""
+
+    def test_is_local_target(self):
+        self.assertTrue(netra.is_local_target(None))
+        self.assertTrue(netra.is_local_target(""))
+        self.assertTrue(netra.is_local_target("localhost"))
+        self.assertTrue(netra.is_local_target("127.0.0.1"))
+        self.assertTrue(netra.is_local_target("::1"))
+        self.assertTrue(netra.is_local_target("host"))
+        self.assertTrue(netra.is_local_target("local"))
+        self.assertFalse(netra.is_local_target("example.com"))
+        self.assertFalse(netra.is_local_target("https://example.com"))
+        self.assertFalse(netra.is_local_target("https://localhost"))
+        self.assertFalse(netra.is_local_target("localhost:8080"))
+
+    def test_categorize_exposure(self):
+        self.assertEqual(netra.categorize_exposure("0.0.0.0"), "EXPOSED")
+        self.assertEqual(netra.categorize_exposure("*"), "EXPOSED")
+        self.assertEqual(netra.categorize_exposure("::"), "EXPOSED")
+        self.assertEqual(netra.categorize_exposure("192.168.1.100"), "EXPOSED")
+        self.assertEqual(netra.categorize_exposure("10.0.0.5"), "EXPOSED")
+        self.assertEqual(netra.categorize_exposure("127.0.0.1"), "LOCAL")
+        self.assertEqual(netra.categorize_exposure("127.0.0.53"), "LOCAL")
+        self.assertEqual(netra.categorize_exposure("::1"), "LOCAL")
+        self.assertEqual(netra.categorize_exposure("localhost"), "LOCAL")
+
+    def test_split_addr_port(self):
+        cases = [
+            ("0.0.0.0:6379", ("0.0.0.0", 6379)),
+            ("*:3000", ("*", 3000)),
+            ("[::]:6379", ("::", 6379)),
+            ("[::1]:631", ("::1", 631)),
+            ("127.0.0.53%lo:53", ("127.0.0.53", 53)),
+            ("[fe80::1]%eth0:546", ("fe80::1", 546)),
+            ("192.168.29.175:56020", ("192.168.29.175", 56020)),
+        ]
+        for raw, expected in cases:
+            self.assertEqual(netra.split_addr_port(raw), expected)
+
+    def test_read_proc_net_dev_parsing(self):
+        sample_data = (
+            "Inter-|   Receive                                                |  Transmit\n"
+            " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n"
+            "    lo: 1000       10    0    0    0     0          0         0     1000       10    0    0    0     0       0          0\n"
+            "wlp4s0: 50000000   4000    1    2    0     0          0         0 25000000   2000    3    4    0     0       0          0\n"
+        )
+        with patch("os.path.exists", return_value=True), patch("builtins.open", mock_open(read_data=sample_data)):
+            ifaces = netra.read_proc_net_dev("/proc/net/dev")
+            self.assertIn("lo", ifaces)
+            self.assertIn("wlp4s0", ifaces)
+            self.assertEqual(ifaces["wlp4s0"]["rx_bytes"], 50000000)
+            self.assertEqual(ifaces["wlp4s0"]["tx_bytes"], 25000000)
+            self.assertEqual(ifaces["wlp4s0"]["rx_errs"], 1)
+            self.assertEqual(ifaces["wlp4s0"]["rx_drop"], 2)
+
+    def test_sample_interface_bandwidth(self):
+        s1 = {"wlp4s0": {"rx_bytes": 100000, "tx_bytes": 50000, "rx_drop": 0, "tx_drop": 0, "rx_errs": 0, "tx_errs": 0}}
+        s2 = {"wlp4s0": {"rx_bytes": 200000, "tx_bytes": 100000, "rx_drop": 0, "tx_drop": 0, "rx_errs": 0, "tx_errs": 0}}
+        with patch("netra.read_proc_net_dev", side_effect=[s1, s2]), patch("time.time", side_effect=[100.0, 101.0]):
+            res = netra.sample_interface_bandwidth(duration=0)
+            self.assertEqual(res["primary_interface"], "wlp4s0")
+            self.assertEqual(res["rx_bytes"], 200000)
+            self.assertEqual(res["tx_bytes"], 100000)
+            self.assertAlmostEqual(res["rx_rate_bps"], 100000.0, places=1)
+            self.assertAlmostEqual(res["tx_rate_bps"], 50000.0, places=1)
+
+    def test_parse_ss_sockets(self):
+        ss_text = (
+            "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+            "tcp   LISTEN 0 4096 0.0.0.0:6379 0.0.0.0:* users:((\"redis-server\",pid=1234,fd=6))\n"
+            "tcp   LISTEN 0 4096 0.0.0.0:5678 0.0.0.0:* \n"
+            "tcp   LISTEN 0 511 *:3000 *:* users:((\"MainThread\",pid=55688,fd=38))\n"
+            "tcp   LISTEN 0 4096 127.0.0.1:11434 0.0.0.0:* \n"
+            "tcp   LISTEN 0 2048 127.0.0.1:8000 0.0.0.0:* users:((\"python\",pid=2055,fd=7))\n"
+            "tcp   LISTEN 0 4096 [::]:6379 [::]:* \n"
+            "tcp   ESTAB 0 0 192.168.29.175:56020 140.82.114.26:443 users:((\"brave\",pid=63003,fd=50))\n"
+            "tcp   ESTAB 0 0 127.0.0.1:40423 127.0.0.1:57678 users:((\"language_server\",pid=22145,fd=31))\n"
+            "tcp   ESTAB 0 0 192.168.29.175:40000 93.184.216.34:80 users:((\"curl\",pid=777,fd=3))\n"
+        )
+        l_ports, e_conns, o_conns = netra.parse_ss_sockets(ss_text)
+        ports = {p["port"]: p for p in l_ports}
+        self.assertIn(6379, ports)
+        self.assertEqual(ports[6379]["exposure"], "EXPOSED")
+        self.assertEqual(ports[6379]["severity"], "HIGH")
+        self.assertEqual(ports[6379]["service"], "Redis Database")
+        self.assertEqual(ports[6379]["processes"][0]["name"], "redis-server")
+
+        self.assertIn(5678, ports)
+        self.assertEqual(ports[5678]["exposure"], "EXPOSED")
+        self.assertEqual(ports[5678]["severity"], "HIGH")
+
+        self.assertIn(3000, ports)
+        self.assertEqual(ports[3000]["exposure"], "EXPOSED")
+        self.assertEqual(ports[3000]["severity"], "MEDIUM")
+
+        self.assertIn(11434, ports)
+        self.assertEqual(ports[11434]["exposure"], "LOCAL")
+        self.assertEqual(ports[11434]["severity"], "INFO")
+
+        self.assertIn(8000, ports)
+        self.assertEqual(ports[8000]["exposure"], "LOCAL")
+        self.assertEqual(ports[8000]["severity"], "INFO")
+
+        self.assertEqual(len(e_conns), 3)
+        remote_ports = {c["remote_port"]: c for c in e_conns}
+        self.assertIn(443, remote_ports)
+        self.assertEqual(remote_ports[443]["service"], "GitHub (TLS)")
+        self.assertIn(80, remote_ports)
+        self.assertEqual(remote_ports[80]["service"], "Unencrypted HTTP (Plaintext)")
+
+    def test_parse_proc_net_sockets_fallback(self):
+        tcp_content = (
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+            "   0: 00000000:18EB 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 27029 1 0000000000000000 100 0 0 10 0\n"
+            "   1: 0100007F:1F40 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 2055 1 0000000000000000 100 0 0 10 0\n"
+        )
+        def fake_open(filename, *args, **kwargs):
+            if filename == "/proc/net/tcp":
+                return io.StringIO(tcp_content)
+            return io.StringIO("")
+
+        with patch("os.path.exists", side_effect=lambda p: p == "/proc/net/tcp"), patch("builtins.open", side_effect=fake_open):
+            l_ports, e_conns, o_conns = netra.parse_proc_net_sockets()
+            ports = {p["port"]: p for p in l_ports}
+            self.assertIn(6379, ports)
+            self.assertEqual(ports[6379]["exposure"], "EXPOSED")
+            self.assertIn(8000, ports)
+            self.assertEqual(ports[8000]["exposure"], "LOCAL")
+
+    def test_threat_heuristics(self):
+        # 1. Suspicious listening port
+        listening = [{"port": 4444, "bind_address": "0.0.0.0", "service": "Metasploit / C2 Listener"}]
+        estab = []
+        other = []
+        threats = netra.evaluate_threat_heuristics(listening, estab, other)
+        self.assertEqual(len(threats), 1)
+        self.assertEqual(threats[0]["severity"], "CRITICAL")
+        self.assertIn("4444", threats[0]["details"])
+
+        # 2. Plaintext outbound
+        listening = []
+        estab = [{"remote_ip": "1.2.3.4", "remote_port": 80, "processes": [{"name": "curl", "pid": 123}]}]
+        threats = netra.evaluate_threat_heuristics(listening, estab, other)
+        self.assertEqual(len(threats), 1)
+        self.assertEqual(threats[0]["severity"], "MEDIUM")
+        self.assertIn("Plaintext", threats[0]["category"])
+
+        # 3. SYN_RECV flood
+        other = [{"state": "SYN-RECV"}] * 12
+        threats = netra.evaluate_threat_heuristics(listening, [], other)
+        self.assertEqual(len(threats), 1)
+        self.assertEqual(threats[0]["severity"], "HIGH")
+        self.assertIn("SYN Flood", threats[0]["category"])
+
+    def test_ssh_key_permissions_hygiene(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ssh_dir = Path(tmpdir)
+            key_insecure = ssh_dir / "id_rsa"
+            key_insecure.write_text("dummy key")
+            key_insecure.chmod(0o644)
+
+            res = netra.inspect_ssh_key_hygiene(ssh_dir)
+            self.assertEqual(res["status"], "FAIL")
+            self.assertIn("id_rsa", res["details"])
+            self.assertIn("should be 0600", res["details"])
+
+            key_insecure.chmod(0o600)
+            res2 = netra.inspect_ssh_key_hygiene(ssh_dir)
+            self.assertEqual(res2["status"], "PASS")
+
+    def test_workspace_secrets_hygiene(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws_dir = Path(tmpdir)
+            env_file = ws_dir / ".env"
+            env_file.write_text("SECRET=123")
+            env_file.chmod(0o644)
+
+            with patch("subprocess.run") as mock_subproc:
+                mock_res = MagicMock()
+                mock_res.returncode = 1
+                mock_subproc.return_value = mock_res
+
+                res = netra.inspect_workspace_secrets_hygiene(ws_dir)
+                self.assertEqual(res["status"], "FAIL")
+                self.assertIn(".env", res["details"])
+
+    def test_calculate_host_security_score(self):
+        clean_obs = {
+            "listening_ports": [{"port": 8000, "exposure": "LOCAL", "severity": "INFO"}],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        score, grade, bar = netra.calculate_host_security_score(clean_obs)
+        self.assertEqual(score, 100)
+        self.assertEqual(grade, "A+")
+
+        risky_obs = {
+            "listening_ports": [
+                {"port": 6379, "exposure": "EXPOSED", "severity": "HIGH"},
+                {"port": 5678, "exposure": "EXPOSED", "severity": "HIGH"},
+                {"port": 3000, "exposure": "EXPOSED", "severity": "MEDIUM"},
+            ],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        score, grade, bar = netra.calculate_host_security_score(risky_obs)
+        self.assertEqual(score, 50)
+        self.assertEqual(grade, "F")
+
+    def test_format_host_observation_table(self):
+        obs = {
+            "hostname": "test-laptop",
+            "ip": "192.168.1.10",
+            "network": {"primary_interface": "wlan0", "rx_bytes": 1024000, "tx_bytes": 512000},
+            "score": 85,
+            "grade": "A",
+            "score_bar": "█" * 17 + "░" * 3,
+            "listening_ports": [
+                {"proto": "tcp", "bind_address": "0.0.0.0", "port": 6379, "exposure": "EXPOSED", "severity": "HIGH", "service": "Redis Database", "processes": []},
+                {"proto": "tcp", "bind_address": "127.0.0.1", "port": 8000, "exposure": "LOCAL", "severity": "INFO", "service": "Dev Server", "processes": []},
+            ],
+            "established_connections": [{"remote_port": 443, "processes": [{"name": "curl"}]}],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        output = netra.format_host_observation_table(obs)
+        self.assertIn("test-laptop", output)
+        self.assertIn("192.168.1.10", output)
+        self.assertIn("Exposed Port 0.0.0.0:6379", output)
+        self.assertIn("Localhost Ports", output)
+        self.assertIn("Malicious / Backdoor Radar", output)
+        self.assertIn("Workspace & SSH Hygiene", output)
+        self.assertIn("GRADE: A", output)
+
+    def test_compare_host_drift(self):
+        baseline = {
+            "type": "host",
+            "target": "localhost",
+            "hostname": "test-laptop",
+            "saved_at": "2026-11-01T12:00:00Z",
+            "listening_ports": [
+                {"proto": "tcp", "port": 8000, "exposure": "LOCAL", "bind_address": "127.0.0.1", "service": "Dev Server"},
+            ],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        live_clean = dict(baseline)
+        diff = netra.compare_host_drift(baseline, live_clean)
+        self.assertFalse(diff["drift_detected"])
+        self.assertEqual(diff["regressions_count"], 0)
+
+        live_drift = {
+            "type": "host",
+            "target": "localhost",
+            "hostname": "test-laptop",
+            "listening_ports": [
+                {"proto": "tcp", "port": 8000, "exposure": "LOCAL", "bind_address": "127.0.0.1", "service": "Dev Server"},
+                {"proto": "tcp", "port": 6379, "exposure": "EXPOSED", "bind_address": "0.0.0.0", "service": "Redis Database", "severity": "HIGH", "processes": []},
+            ],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        diff2 = netra.compare_host_drift(baseline, live_drift)
+        self.assertTrue(diff2["drift_detected"])
+        self.assertEqual(diff2["regressions_count"], 1)
+        self.assertIn("6379", diff2["regressions"][0]["control"])
+        self.assertEqual(diff2["regressions"][0]["severity"], "high")
+
+        live_escalation = {
+            "type": "host",
+            "target": "localhost",
+            "hostname": "test-laptop",
+            "listening_ports": [
+                {"proto": "tcp", "port": 8000, "exposure": "EXPOSED", "bind_address": "0.0.0.0", "service": "Dev Server", "severity": "MEDIUM", "processes": []},
+            ],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        diff3 = netra.compare_host_drift(baseline, live_escalation)
+        self.assertTrue(diff3["drift_detected"])
+        self.assertIn("Port Exposure", diff3["regressions"][0]["control"])
+
+    def test_generate_host_issue_content(self):
+        diff = {
+            "type": "host",
+            "target": "localhost",
+            "live": {"hostname": "nitro-laptop", "ip": "192.168.1.5", "timestamp": "2026-11-03T18:00:00Z"},
+            "baseline": {"saved_at": "2026-11-01T10:00:00Z"},
+            "drift_detected": True,
+            "regressions_count": 1,
+            "regressions": [
+                {
+                    "control": "Exposed Port 0.0.0.0:6379",
+                    "severity": "high",
+                    "baseline": "closed",
+                    "observed": "0.0.0.0:6379 (EXPOSED)",
+                    "recommendation": "Bind Redis to 127.0.0.1",
+                }
+            ],
+        }
+        title, body = netra.generate_host_issue_content(diff)
+        self.assertIn("[NETRA Host Incident]", title)
+        self.assertIn("nitro-laptop", title)
+        self.assertIn("Exposed Port 0.0.0.0:6379", body)
+        self.assertIn("Swytchcode", body)
 
 
 if __name__ == "__main__":

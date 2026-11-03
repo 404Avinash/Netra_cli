@@ -12,19 +12,34 @@
 [![NETRA_CLI CI](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml/badge.svg)](https://github.com/404Avinash/Netra_cli/actions/workflows/ci.yml)
 ![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Dependencies](https://img.shields.io/badge/dependencies-0%20external-brightgreen)
-![Tests](https://img.shields.io/badge/tests-54%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**NETRA_CLI** is a lightweight, zero-dependency developer and DevOps utility to monitor external web security configurations, prevent silent perimeter drift, and safely dispatch regression issues. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
+**NETRA_CLI** is a lightweight, zero-dependency **Local Laptop Network & Threat Guardian** and **Remote Perimeter Security Auditor**. Inspired by **Trivy** (high-contrast vulnerability severity grading) and **btop** (live interactive terminal monitoring).
 
-Built entirely with Python's standard library—no `pip install` required to run.
+Built entirely with Python's standard library—**no `pip install` required to run**.
+
+---
+
+## What is NETRA_CLI?
+
+NETRA operates with dual capability depending on how you invoke it:
+
+1. **Local Laptop Network & Threat Guardian (Default: `netra`)**  
+   Audits your local machine in sub-seconds. Detects publicly bound listening ports (`0.0.0.0` or `*` exposing databases, debuggers, or dev servers), samples real-time interface bandwidth via `/proc/net/dev`, tracks active outbound process connections, scans for malicious C2/cryptominer ports, and audits SSH key and workspace `.env` secret hygiene.
+2. **Remote Perimeter Security Auditor (`netra <domain>`)**  
+   Inspects external web endpoints for plaintext HTTP downgrade vulnerabilities, TLS certificate expiration dates, and RFC-compliant HTTP security headers (`Strict-Transport-Security`, `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`).
+3. **btop-Style Live Interactive Radar (`netra top`)**  
+   Full-screen live curses terminal dashboard displaying interface bandwidth meters, active socket exposure matrix, process telemetry, and hotkey actions (`[r]` refresh, `[s]` lock baseline, `[q]` exit).
+4. **Governed Baseline Drift & Swytchcode Issue Dispatch (`netra notify`)**  
+   Lock security benchmarks into versioned snapshots (`.netra/baselines/`), automatically detect regressions or unexpected exposed ports, and dispatch GitHub issues via the Swytchcode Execution Authority Kernel without hardcoding API secrets.
 
 ---
 
 ## Visual Highlights
 
-### 1. Trivy-Style Security Audit (`netra check`)
-Instant endpoint inspection with objective security scoring, letter grades, and severity pills:
+### 1. Local Laptop Threat Audit (`netra` / `netra check`)
+Running bare `netra` instantly audits your local laptop's network posture, open listeners, and workspace hygiene:
 
 ```text
   _   _ _____ _____ ____      _       ____ _     ___ 
@@ -34,14 +49,71 @@ Instant endpoint inspection with objective security scoring, letter grades, and 
  |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
       Network & Endpoint Threat & Resilience Assessor
 
- Target: https://github.com  |  Timestamp: 2026-11-02T18:21:30Z
+ Target: Local Host (developer-laptop | 192.168.1.105)  |  Interface: wlp4s0 (▼ 3.45 GB RX / ▲ 2.24 GB TX)
+ Security Score: [██████░░░░░░░░░░░░░░] 30/100  (GRADE: F)
+
+┌─────────────────────────────┬────────────────┬────────────┬────────────────────────────────────────────────┐
+│ CATEGORY / CHECK            │ STATUS         │ SEVERITY   │ DETAILS / PROCESS                              │
+├─────────────────────────────┼────────────────┼────────────┼────────────────────────────────────────────────┤
+│ Exposed Port *:3000         │ [ EXPOSED  ]   │   MEDIUM   │ Dev Server (Node/React/Rails) bound to 0.0.0.0 │
+│ Exposed Port *:4000         │ [ EXPOSED  ]   │   MEDIUM   │ Dev Server bound to all interfaces             │
+│ Exposed Port 0.0.0.0:5678   │ [ EXPOSED  ]   │    HIGH    │ Debugger bound to all interfaces               │
+│ Exposed Port 0.0.0.0:6379   │ [ EXPOSED  ]   │    HIGH    │ Redis Database bound to all interfaces         │
+│ Localhost Ports (12 active) │ [   SAFE   ]   │    INFO    │ 127.0.0.1 (:53 DNS Resolv, :631 CUPS, ...)     │
+│ Outbound Conns (11)         │ [  NORMAL  ]   │    INFO    │ All 11 ESTABLISHED conns over TLS (chrome, ...) │
+│ Malicious / Backdoor Radar  │ [  CLEAN   ]   │    INFO    │ 0 C2/miner ports, 0 SYN floods, 0 plaintext    │
+│ Workspace & SSH Hygiene     │ [   PASS   ]   │    INFO    │ SSH keys 0600, no untracked .env leaks         │
+└─────────────────────────────┴────────────────┴────────────┴────────────────────────────────────────────────┘
+ Summary: 4 Passed, 0 Warnings, 4 Exposed / Risks
+```
+
+### 2. Live Interactive Laptop Radar (`netra top`)
+Real-time, interactive curses dashboard with bandwidth rates, socket tables, and instant hotkey baseline locking:
+
+```text
+┌─────────────────────────── NETRA LIVE MONITOR  ──  [Target: localhost] ───────────────────────────┐
+│ Security Score: [██████░░░░░░░░░░░░░░] 30/100   GRADE: F      Host: laptop (192.168.1.105)  Audit: 18:30:15 │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ NETWORK INTERFACE & BANDWIDTH (wlp4s0)                                                                      │
+│ Rate: ▼ 42.5 KB/s RX  |  ▲ 18.2 KB/s TX       Total: ▼ 3.45 GB RX  |  ▲ 2.24 GB TX                          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ LISTENING PORTS & EXPOSURE RADAR                                                                            │
+│   [ EXPOSED  ]  0.0.0.0:6379 (TCP)  Redis Database (redis-server:1204)                                      │
+│   [ EXPOSED  ]  0.0.0.0:5678 (TCP)  Debugger / Service (python3:4812)                                       │
+│   [ EXPOSED  ]  *:3000 (TCP)        Dev Server (Node/React/Rails) (node:9821)                               │
+│   [   SAFE   ]  127.0.0.1:5432 (TCP) PostgreSQL Database (postgres:892)                                     │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ACTIVE ESTABLISHED CONNECTIONS (TOP 5)                                                                      │
+│   chrome (pid 3140)    192.168.1.105:48920 -> 142.250.190.46:443 (HTTPS)                                   │
+│   code (pid 4102)      192.168.1.105:51204 -> 20.201.28.151:443 (HTTPS)                                    │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ BASELINE DRIFT CONTRACT                                                                                     │
+│     ✔ BASELINE MATCH: Healthy contract (saved 2026-11-03T18:22:54)                                          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ HOTKEYS: [r] Refresh Now   [s] Save Baseline Snapshot   [q] Quit                                            │
+│ Live monitoring active (interval: 2.0s) | Press 'q' to quit                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 3. Remote Perimeter Security Audit (`netra github.com`)
+Target any external domain or web service for instant perimeter inspection:
+
+```text
+  _   _ _____ _____ ____      _       ____ _     ___ 
+ | \ | | ____|_   _|  _ \    / \     / ___| |   |_ _|
+ |  \| |  _|   | | | |_) |  / _ \   | |   | |    | | 
+ | |\  | |___  | | |  _ <  / ___ \  | |___| |___ | | 
+ |_| \_|_____| |_| |_| \_\/_/   \_\  \____|_____|___|
+      Network & Endpoint Threat & Resilience Assessor
+
+ Target: https://github.com  |  Timestamp: 2026-11-03T18:23:07Z
  Security Score: [████████████████████] 100/100  (GRADE: A+)
 
 ┌─────────────────────────────┬────────────────┬────────────┬────────────────────────────────────────────────┐
 │ CONTROL                     │ STATUS         │ SEVERITY   │ DETAILS / VALUE                                │
 ├─────────────────────────────┼────────────────┼────────────┼────────────────────────────────────────────────┤
 │ HTTP -> HTTPS Redirect      │ [   PASS   ]   │    INFO    │ HTTP 301 redirects to HTTPS: https://github... │
-│ TLS Certificate Validity    │ [   PASS   ]   │    INFO    │ Valid certificate (86 days left, expires 20... │
+│ TLS Certificate Validity    │ [   PASS   ]   │    INFO    │ Valid certificate (85 days left, expires 20... │
 │ Strict-Transport-Security   │ [ PRESENT  ]   │    INFO    │ max-age=31536000; includeSubdomains; preload   │
 │ Content-Security-Policy     │ [ PRESENT  ]   │    INFO    │ default-src 'none'; base-uri 'self'; child-... │
 │ X-Content-Type-Options      │ [ PRESENT  ]   │    INFO    │ nosniff                                        │
@@ -50,121 +122,89 @@ Instant endpoint inspection with objective security scoring, letter grades, and 
  Summary: 6 Passed, 0 Inconclusive, 0 Failed
 ```
 
-### 2. btop-Style Interactive Dashboard (`netra top`)
-Real-time, interactive curses dashboard with dynamic countdown gauges, matrix health, and hotkey actions (`[r]` refresh, `[s]` lock baseline, `[q]` exit):
-
-```text
-┌─────────────────────────── NETRA LIVE MONITOR  ──  [Target: https://github.com] ───────────────────────────┐
-│ Security Score: [████████████████████] 100/100   GRADE: A+     Latency: 142ms          Audit: 18:21:30 UTC │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ TLS CERTIFICATE EXPIRATION GAUGE                                                                            │
-│ [████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 86 Days Remaining                                                   │
-│ Expires: 2027-01-27T23:59:59Z  |  Issuer: Sectigo Public Server CA                                          │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ PERIMETER CONTROLS MATRIX                                                                                   │
-│     HTTP -> HTTPS Redirect:   [  PASS  ]  HTTP 301 redirects to HTTPS: https://github.com/                  │
-│     HSTS Protection:          [PRESENT ]  max-age=31536000; includeSubdomains; preload                      │
-│     CSP Hardening:            [PRESENT ]  default-src 'none'; base-uri 'self'; style-src 'unsafe-inline'    │
-│     nosniff Guard:            [PRESENT ]  nosniff                                                           │
-│     Referrer Policy:          [PRESENT ]  origin-when-cross-origin, strict-origin-when-cross-origin         │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ BASELINE DRIFT CONTRACT                                                                                     │
-│     ✔ BASELINE MATCH: Healthy contract (saved 2026-11-02T15:38:13)                                          │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ HOTKEYS: [r] Refresh Now   [s] Save Baseline Snapshot   [q] Quit                                            │
-│ Live monitoring active (interval: 5.0s) | Press 'q' to quit                                                 │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
 ---
 
-## The Problem: Silent Security Degradation
+## Tooling Comparison Matrix
 
-In modern development and deployment workflows, web security settings frequently degrade unnoticed:
-- A reverse proxy reload drops the `Strict-Transport-Security` (HSTS) header or weakens the `Content-Security-Policy` (CSP).
-- An ingress controller restart causes port 80 to stop redirecting HTTP traffic to HTTPS, exposing users to plaintext downgrade attacks.
-- A TLS certificate draws close to expiry or is renewed with unexpected attributes.
-
-### Tooling Comparison Matrix
-
-| Capability | Uptime Monitors (e.g. Pingdom) | Vulnerability Scanners (e.g. Nessus) | **NETRA_CLI** |
-|---|:---:|:---:|:---:|
-| **HTTP → HTTPS Redirect Validation** | ❌ Blindly follows redirect | ⚠️ Buried in 50-page PDF | ✅ **Explicit check & validation** |
-| **Header Drift (HSTS, CSP, nosniff)** | ❌ Ignores headers | ⚠️ High false-positive noise | ✅ **Direct presence & RFC validation** |
-| **TLS Expiry Monitoring** | ⚠️ Basic ping | ⚠️ Heavy scheduled agent | ✅ **Calculates days & ignores renewals** |
-| **Execution Speed & Portability** | N/A (SaaS only) | Heavy binary / agents | ✅ **Sub-second, 0 external deps** |
-| **Interactive Terminal TUI** | ❌ No TUI | ❌ No TUI | ✅ **btop-style curses dashboard (`netra top`)** |
-| **Alerting Pipeline Safety** | Webhook spam | Email alert flood | ✅ **Swytchcode Execution Authority** |
+| Capability | Wireshark / Netstat | Uptime Monitors (Pingdom) | Host Security Scanners (Trivy/Nessus) | **NETRA_CLI** |
+|---|:---:|:---:|:---:|:---:|
+| **Zero External Dependencies** | ❌ Requires drivers/root | N/A (SaaS only) | ❌ Heavy binary / containers | ✅ **Pure Python stdlib (0 deps)** |
+| **Default Laptop Network Audit** | Raw packet dump | ❌ Remote only | ⚠️ Heavy agent or Docker required | ✅ **Instant sub-second audit (`netra`)** |
+| **Exposed Dev Server / DB Alerts** | Manual inspection | ❌ Not covered | ⚠️ Complex configuration | ✅ **Automatic `[ EXPOSED ]` flagging** |
+| **Workspace & SSH Secret Hygiene** | ❌ No | ❌ No | ⚠️ Clunky setup | ✅ **Checks SSH key permissions & `.env`** |
+| **Live Interactive Terminal TUI** | ❌ No TUI | ❌ No TUI | ❌ No TUI | ✅ **btop-style dashboard (`netra top`)** |
+| **External Perimeter Auditing** | ❌ No | ⚠️ Basic ping | ⚠️ Buried in 50-page PDF | ✅ **Direct RFC header & TLS validation** |
+| **Alerting Pipeline Safety** | ❌ No | Webhook spam | Email alert flood | ✅ **Swytchcode Execution Authority** |
 
 ---
 
 ## Operational Workflow
 
-### Security Baseline Lifecycle (Git Graph)
+### Security Baseline Lifecycle
 
-NETRA treats web security posture like version-controlled source code. You lock in a known good baseline (`baseline save`), verify deployments against it (`compare`), and catch regressions before your users do:
+NETRA treats both laptop network hygiene and external web posture as version-controlled baselines:
 
 ```text
-*   d4e7f9a (HEAD -> main) Dispatched Issue #1 via Swytchcode Kernel
+*   d4e7f9a (HEAD -> main) Dispatched Issue via Swytchcode Kernel
 |\  
-| * c8b2a10 (drift-analysis) netra notify --confirm (github.issue.create)
-| * a7f3c21 netra compare --target https://example.com (5 regressions detected)
-| * 5e2d19b Server deploy / reverse proxy configuration reload
+| * c8b2a10 (drift-analysis) netra notify --repo OWNER/REPO --confirm (github.issue.create)
+| * a7f3c21 netra compare (New exposed listener or security regression detected)
+| * 5e2d19b Started unexpected service / changed configuration
 |/  
-* 2b8f410 netra baseline save --target https://example.com (locked contract)
-* 1a9c042 netra check --target https://example.com (initial security audit)
+* 2b8f410 netra baseline save --yes (locked baseline snapshot)
+* 1a9c042 netra (initial laptop threat & network audit)
 ```
 
 ### End-to-End Pipeline
 
 ```text
-  ┌───────────────────────────────────┐
-  │ 1. Target Website                 │
-  │    (https://example.com)          │
-  └─────────────────┬─────────────────┘
-                    │
-                    ▼
-  ┌───────────────────────────────────┐
-  │ 2. Audit: netra check / netra top │ ──▶ Trivy table & btop-style live dashboard
-  └─────────────────┬─────────────────┘
-                    │
-                    ▼
-  ┌───────────────────────────────────┐
-  │ 3. Lock: netra baseline save      │ ──▶ Snapshot persisted to .netra/baselines/
-  └─────────────────┬─────────────────┘
-                    │
-                    ▼
-  ┌───────────────────────────────────┐
-  │ [Server Deploy / Proxy Reload]    │ ──▶ Operational changes occur
-  └─────────────────┬─────────────────┘
-                    │
-                    ▼
-  ┌───────────────────────────────────┐
-  │ 4. Verify: netra compare          │
-  └─────────────────┬─────────────────┘
-                    ├─────────────────────────────────────────────┐
-          [No Drift Detected]                             [Regressions Found]
-                    │                                             │
-                    ▼                                             ▼
-  ┌───────────────────────────────────┐         ┌───────────────────────────────────┐
-  │ ✔ Exit 0 (Contract Intact)        │         │ ▲ Exit 1: netra notify            │
-  └───────────────────────────────────┘         └─────────────────┬─────────────────┘
-                                                                  │
-                                                                  ▼
-                                                ┌───────────────────────────────────┐
-                                                │ 5. Safe Markdown Preview Mode     │ (Zero external calls)
-                                                └─────────────────┬─────────────────┘
-                                                                  │
-                                                                  ▼
-                                                ┌───────────────────────────────────┐
-                                                │ 6. Swytchcode Execution Kernel    │ (--confirm passed)
-                                                │    (github.issue.create)          │
-                                                └─────────────────┬─────────────────┘
-                                                                  │
-                                                                  ▼
-                                                ┌───────────────────────────────────┐
-                                                │ 🚀 Live GitHub Issue Created      │ (No hardcoded secrets)
-                                                └───────────────────────────────────┘
+   ┌──────────────────────────────────────────────┐
+   │ 1. Invocation (Laptop or Remote Target)      │
+   │    netra                 netra github.com    │
+   └──────────────────────┬───────────────────────┘
+                          │
+                          ▼
+   ┌──────────────────────────────────────────────┐
+   │ 2. Audit: netra check / netra top            │ ──▶ Trivy table & btop live dashboard
+   └──────────────────────┬───────────────────────┘
+                          │
+                          ▼
+   ┌──────────────────────────────────────────────┐
+   │ 3. Lock: netra baseline save                 │ ──▶ Snapshot in .netra/baselines/
+   └──────────────────────┬───────────────────────┘
+                          │
+                          ▼
+   ┌──────────────────────────────────────────────┐
+   │ [Port opened / Secrets changed / Deploy]     │ ──▶ Operational state changes
+   └──────────────────────┬───────────────────────┘
+                          │
+                          ▼
+   ┌──────────────────────────────────────────────┐
+   │ 4. Verify: netra compare                     │
+   └──────────────────────┬───────────────────────┘
+                          ├─────────────────────────────────────────────┐
+                [No Drift Detected]                             [Regressions Found]
+                          │                                             │
+                          ▼                                             ▼
+   ┌──────────────────────────────────────────────┐         ┌───────────────────────────────────┐
+   │ ✔ Exit 0 (Contract Intact)                   │         │ ▲ Exit 1: netra notify            │
+   └──────────────────────────────────────────────┘         └─────────────────┬─────────────────┘
+                                                                              │
+                                                                              ▼
+                                                            ┌───────────────────────────────────┐
+                                                            │ 5. Safe Markdown Preview Mode     │ (Zero external calls)
+                                                            └─────────────────┬─────────────────┘
+                                                                              │
+                                                                              ▼
+                                                            ┌───────────────────────────────────┐
+                                                            │ 6. Swytchcode Execution Kernel    │ (--confirm passed)
+                                                            │    (github.issue.create)          │
+                                                            └─────────────────┬─────────────────┘
+                                                                              │
+                                                                              ▼
+                                                            ┌───────────────────────────────────┐
+                                                            │ 🚀 Live GitHub Issue Created      │ (No hardcoded secrets)
+                                                            └───────────────────────────────────┘
 ```
 
 ---
@@ -219,6 +259,10 @@ curl -sSL https://raw.githubusercontent.com/404Avinash/Netra_cli/main/install.sh
 
 Once installed, invoke `netra` globally from anywhere in your terminal:
 ```bash
+# Instant local laptop audit
+netra
+
+# Or scan an external perimeter
 netra github.com
 ```
 
@@ -235,7 +279,7 @@ pip install -e .
 pipx install .
 
 # Run netra from anywhere
-netra --help
+netra
 ```
 
 ### Method C: Standalone Portable Mode (Zero Installation)
@@ -245,69 +289,41 @@ NETRA runs out-of-the-box anywhere Python 3.10+ is installed:
 ```bash
 git clone https://github.com/404Avinash/Netra_cli.git
 cd Netra_cli
-python3 netra.py example.com
+python3 netra.py
 ```
 
 ---
 
 ## Usage Guide
 
-### Nmap-Style Bare Domain Invocation (Zero Ceremony)
+### 1. Instant Local Laptop Threat Audit (`netra`)
 
-Just like `nmap` or `curl`, pass any bare domain or URL directly. NETRA automatically normalizes the target (prepending `https://` if no scheme is specified) and executes an instant security audit:
-
-```bash
-# Nmap-style bare invocation (automatically performs security audit)
-netra github.com
-
-# Raw JSON output for automation and jq processing
-netra github.com --json
-
-# Launch live interactive dashboard directly
-netra top github.com
-```
-
-> [!NOTE]
-> **100% Backward Compatible:** All subcommands support both positional targets (`netra check example.com`, `netra top example.com`) and standard flag syntax (`--target https://example.com`).
-
----
-
-### 1. Instant Security Audit (`netra check`)
-
-Inspect an endpoint with formatted Trivy-style table output:
+Run `netra` without arguments to audit your local laptop:
 
 ```bash
-# Nmap-style bare domain
-netra github.com
+# Bare invocation: instant local audit
+netra
 
-# Positional target
-netra check github.com
+# Equivalent explicit command
+netra check
 
-# Classic flag syntax
-netra check --target https://github.com
+# Raw JSON output for automation, scripts, and SIEM pipelines
+netra --json
 ```
 
-For scripts and CI pipelines, use `--json`:
-```bash
-netra github.com --json
-# or
-netra check --target https://github.com --json
-```
-
----
-
-### 2. Live Terminal Monitoring Dashboard (`netra top`)
+### 2. Live Interactive Laptop Radar (`netra top`)
 
 Launch an interactive, btop-style monitoring dashboard:
 
 ```bash
-# Positional syntax
-netra top github.com
+# Live dashboard for local laptop
+netra top
 
-# Or with custom interval and flags:
-netra top --target https://github.com --interval 3.0
-# or alias:
-netra monitor github.com
+# Custom refresh interval (in seconds):
+netra top --interval 1.0
+
+# Alias
+netra monitor
 ```
 
 **Interactive Hotkeys:**
@@ -315,59 +331,47 @@ netra monitor github.com
 - `[s]`: Save current security posture as baseline snapshot
 - `[q]`: Exit dashboard cleanly
 
----
-
-### 3. Save a Reviewed Baseline (`netra baseline save`)
+### 3. Save a Baseline Benchmark (`netra baseline save`)
 
 Lock the current posture as the authoritative benchmark:
 
 ```bash
-# Positional syntax
+# Save local host baseline (stored in .netra/baselines/localhost.json)
+netra baseline save --yes
+
+# Or save external domain baseline
 netra baseline save example.com --yes
-
-# Or flag syntax:
-netra baseline save --target https://example.com --yes
-# ✔ Baseline saved successfully to baselines/example.com.json
 ```
-
----
 
 ### 4. Detect Drift & Regressions (`netra compare`)
 
 Compare live security posture against your saved baseline:
 
 ```bash
-# Positional syntax
-netra compare example.com
+# Compare local host against baseline
+netra compare
 
-# Or flag syntax:
-netra compare --target https://example.com
+# Or compare external domain
+netra compare example.com
 ```
 
-**Output when regressions are detected (exits with code `1`):**
+**Output when regressions or newly exposed ports are detected (exits with code `1`):**
 ```text
-┌─────────────────────────────┬────────────┬────────────┬────────────┬──────────┐
-│ CONTROL                     │ BASELINE   │ CURRENT    │ STATUS     │ SEVERITY │
-├─────────────────────────────┼────────────┼────────────┼────────────┼──────────┤
-│ HTTP->HTTPS Redirect        │ pass       │ fail       │ DRIFT      │ MEDIUM   │
-│ TLS Certificate Validity    │ pass       │ pass       │ MATCH      │ -        │
-│ Strict-Transport-Security   │ present    │ missing    │ DRIFT      │ MEDIUM   │
-│ Content-Security-Policy     │ present    │ missing    │ DRIFT      │ MEDIUM   │
-│ X-Content-Type-Options      │ present    │ missing    │ DRIFT      │ LOW      │
-│ Referrer-Policy             │ present    │ missing    │ DRIFT      │ LOW      │
-└─────────────────────────────┴────────────┴────────────┴────────────┴──────────┘
+┌─────────────────────────────┬────────────────┬────────────────┬────────────┬──────────┐
+│ CONTROL / PORT              │ BASELINE       │ CURRENT        │ STATUS     │ SEVERITY │
+├─────────────────────────────┼────────────────┼────────────────┼────────────┼──────────┤
+│ Exposed Port 0.0.0.0:6379   │ closed/local   │ EXPOSED        │ DRIFT      │ HIGH     │
+│ Exposed Port *:3000         │ closed/local   │ EXPOSED        │ DRIFT      │ MEDIUM   │
+│ SSH Key Permissions         │ 0600 (PASS)    │ wider (FAIL)   │ DRIFT      │ HIGH     │
+└─────────────────────────────┴────────────────┴────────────────┴────────────┴──────────┘
 
-▲ DRIFT DETECTED: 5 security regression(s) identified!
+▲ DRIFT DETECTED: 3 host security regression(s) identified!
 
 Recommended Actions:
-  1. [MEDIUM] HTTP->HTTPS Redirect: Enforce permanent 301/308 redirect from HTTP to HTTPS on port 80.
-  2. [MEDIUM] Strict-Transport-Security: Restore Strict-Transport-Security header (recommended: max-age=31536000; includeSubDomains).
-  3. [MEDIUM] Content-Security-Policy: Restore Content-Security-Policy header to protect against XSS and content injection.
-  4. [LOW] X-Content-Type-Options: Restore 'X-Content-Type-Options: nosniff' header to prevent MIME sniffing.
-  5. [LOW] Referrer-Policy: Restore 'Referrer-Policy: strict-origin-when-cross-origin' header to prevent referrer leakage.
+  1. [HIGH] Exposed Port 0.0.0.0:6379: Bind Redis Database to 127.0.0.1 or firewall port 6379.
+  2. [MEDIUM] Exposed Port *:3000: Bind Dev Server to 127.0.0.1.
+  3. [HIGH] SSH Key Permissions: Run 'chmod 600 ~/.ssh/id_*' to secure private keys.
 ```
-
----
 
 ### 5. Safe Alert Dispatch via Swytchcode (`netra notify`)
 
@@ -377,20 +381,18 @@ When regressions occur, file a GitHub issue directly in your tracking repository
 Running without `--confirm` displays a full markdown preview with **zero external network calls**:
 
 ```bash
-# Positional target
-netra notify example.com --repo 404Avinash/Netra_cli
+# Preview local laptop regression issue
+netra notify --repo 404Avinash/Netra_cli
 
-# Flag syntax
-netra notify --target https://example.com --repo 404Avinash/Netra_cli
+# Preview external endpoint regression issue
+netra notify example.com --repo 404Avinash/Netra_cli
 ```
 
 #### Confirmed Dispatch
 Pass `--confirm` to route the dispatch through Swytchcode's kernel:
 
 ```bash
-netra notify example.com --repo 404Avinash/Netra_cli --confirm
-# or:
-netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
+netra notify --repo 404Avinash/Netra_cli --confirm
 # ✔ Issue created successfully via Swytchcode!
 # Issue URL: https://github.com/404Avinash/Netra_cli/issues/1
 ```
@@ -400,7 +402,40 @@ netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
 
 ---
 
+### 6. External Perimeter Security Auditing (`netra <domain>`)
+
+All commands seamlessly accept external domains or URLs:
+
+```bash
+# Nmap-style bare invocation for remote perimeter
+netra github.com
+
+# Explicit check
+netra check github.com
+
+# Live remote certificate and header monitor
+netra top github.com
+
+# Remote JSON observation
+netra github.com --json
+```
+
+---
+
 ## Monitored Security Controls
+
+### Local Laptop & Host Guardian Controls
+
+| Control / Check | Inspection Method | Criteria | Severity on Regression | Weight |
+|---|---|---|---|---|
+| **Exposed Databases & Debuggers** | Sockets via `ss` / `/proc/net/tcp` | Bound to `0.0.0.0`, `*`, or `::` (e.g. Redis `6379`, Postgres `5432`, Debugger `5678`/`9229`) | **HIGH / CRITICAL** | 20-40 pts |
+| **Exposed Dev Servers** | Sockets via `ss` / `/proc/net/tcp` | Dev servers bound to all interfaces (`3000`, `4000`, `5000`, `5173`, `8080`, `8000`) | **MEDIUM** | 10-20 pts |
+| **Outbound Plaintext Leak** | Process connections (`ESTAB`) | Active outbound plaintext HTTP (`80`), Telnet (`23`), or FTP (`21`) | **MEDIUM** | 10 pts |
+| **Backdoor / C2 / Miner Ports** | Sockets & active conns | Known suspicious ports (`4444`, `1337`, `3333`, `6667`, etc.) | **CRITICAL** | 30 pts |
+| **SSH Private Key Hygiene** | `stat` on `~/.ssh/id_*` | Permissions wider than `0600` (e.g., world/group readable) | **HIGH** | 25 pts |
+| **Workspace Secrets Hygiene** | Git tracking & file scan | `.env` files unignored in git repositories | **MEDIUM** | 15 pts |
+
+### Remote Perimeter Controls
 
 | Control | Verification Method | Status Values | Severity on Regression | Weight |
 |---|---|---|---|---|
@@ -415,14 +450,14 @@ netra notify --target https://example.com --repo 404Avinash/Netra_cli --confirm
 
 ## Test Suite
 
-NETRA includes a comprehensive zero-dependency test suite mocking all network layers (`socket`, `ssl`, and HTTP):
+NETRA includes a comprehensive zero-dependency test suite mocking all network layers (`socket`, `ssl`, HTTP, `ss`, and `/proc/net`):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
 ```text
-Ran 54 tests in 0.197s
+Ran 69 tests in 0.274s
 
 OK
 ```

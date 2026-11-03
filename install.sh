@@ -83,11 +83,19 @@ EXPORT_CMD="export PATH=\"\$HOME/.local/bin:\$PATH\""
 
 if [ "$PATH_CONFIGURED" = false ]; then
     for rc in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile"; do
-        if [ -f "$rc" ] && ! grep -q '\.local/bin' "$rc"; then
+        if [ -f "$rc" ] && ! grep -E '^[[:space:]]*export[[:space:]]+.*\.local/bin' "$rc" >/dev/null 2>&1; then
             printf "\n# NETRA_CLI path\n%s\n" "$EXPORT_CMD" >> "$rc"
             RC_UPDATED=true
         fi
     done
+    # If ~/.bun/bin exists and is in PATH, link it for instant access in current shell
+    if [ -d "${HOME}/.bun/bin" ]; then
+        case ":$PATH:" in
+            *":${HOME}/.bun/bin:"*)
+                ln -sf "${TARGET_BIN}" "${HOME}/.bun/bin/netra" 2>/dev/null || true
+                ;;
+        esac
+    fi
 fi
 
 # 6. Friendly Completion Banner

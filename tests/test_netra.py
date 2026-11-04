@@ -1412,6 +1412,87 @@ class TestCursesTerminalRadar(unittest.TestCase):
             save_kwargs = mock_save.call_args[1]
             self.assertFalse(save_kwargs.get("verbose", True))
 
+    def test_benign_os_udp_ports_filtered(self):
+        ss_sample = (
+            "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+            "udp   UNCONN 0      0      0.0.0.0:5353       0.0.0.0:*         users:((\"avahi-daemon\",pid=900,fd=12))\n"
+            "udp   UNCONN 0      0      [fe80::1]:546      [::]:*            users:((\"NetworkManager\",pid=901,fd=14))\n"
+            "tcp   LISTEN 0      128    0.0.0.0:6379       0.0.0.0:*         users:((\"redis-server\",pid=902,fd=6))\n"
+        )
+        l_ports, _, _ = netra.parse_ss_sockets(ss_sample)
+        ports = [p["port"] for p in l_ports]
+        self.assertNotIn(5353, ports)
+        self.assertNotIn(546, ports)
+        self.assertIn(6379, ports)
+
+    @patch("netra.observe")
+    @patch("netra.load_baseline", side_effect=FileNotFoundError("not found"))
+    def test_golden_baseline_fallback_in_compare(self, _mock_load, mock_observe):
+        mock_observe.return_value = {
+            "target": "https://example.com",
+            "timestamp": "2026-11-04T00:00:00Z",
+            "redirect": {"status": "pass", "details": "OK"},
+            "tls": {"status": "pass", "days_remaining": 60, "details": "OK"},
+            "headers": {
+                "Strict-Transport-Security": {"status": "present", "value": "max-age=31536000"},
+                "Content-Security-Policy": {"status": "present", "value": "default-src 'self'"},
+                "X-Content-Type-Options": {"status": "present", "value": "nosniff"},
+                "Referrer-Policy": {"status": "present", "value": "strict-origin"},
+            },
+        }
+        parser = netra.build_parser()
+        args = parser.parse_args(["compare", "example.com", "--json"])
+        with patch("builtins.print"):
+            rc = netra.handle_compare(args)
+        self.assertEqual(rc, 0)
+
+    @patch("netra.inspect_local_host")
+    @patch("netra.observe")
+    def test_handle_demo_end_to_end(self, mock_observe, mock_host):
+        mock_host.return_value = {
+            "hostname": "demo-host",
+            "ip": "127.0.0.1",
+            "score": 100,
+            "grade": "A+",
+            "score_bar": "█" * 20,
+            "network": {"primary_interface": "lo", "rx_bytes": 100, "tx_bytes": 100},
+            "listening_ports": [],
+            "established_connections": [],
+            "threats": [],
+            "hygiene": {"ssh_keys": {"status": "PASS"}, "workspace_secrets": {"status": "PASS"}},
+        }
+        mock_observe.side_effect = [
+            {
+                "target": "https://github.com",
+                "timestamp": "2026-11-04T00:00:00Z",
+                "redirect": {"status": "pass", "details": "301"},
+                "tls": {"status": "pass", "days_remaining": 85, "details": "Valid"},
+                "headers": {
+                    "Strict-Transport-Security": {"status": "present", "value": "max-age=31536000"},
+                    "Content-Security-Policy": {"status": "present", "value": "default-src 'none'"},
+                    "X-Content-Type-Options": {"status": "present", "value": "nosniff"},
+                    "Referrer-Policy": {"status": "present", "value": "strict-origin"},
+                },
+            },
+            {
+                "target": "https://example.com",
+                "timestamp": "2026-11-04T00:00:00Z",
+                "redirect": {"status": "fail", "details": "200 OK"},
+                "tls": {"status": "pass", "days_remaining": 50, "details": "Valid"},
+                "headers": {
+                    "Strict-Transport-Security": {"status": "missing"},
+                    "Content-Security-Policy": {"status": "missing"},
+                    "X-Content-Type-Options": {"status": "missing"},
+                    "Referrer-Policy": {"status": "missing"},
+                },
+            },
+        ]
+        parser = netra.build_parser()
+        args = parser.parse_args(["demo"])
+        with patch("builtins.print"):
+            rc = netra.handle_demo(args)
+        self.assertEqual(rc, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

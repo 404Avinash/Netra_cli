@@ -88,14 +88,15 @@ if [ "$PATH_CONFIGURED" = false ]; then
             RC_UPDATED=true
         fi
     done
-    # If ~/.bun/bin exists and is in PATH, link it for instant access in current shell
-    if [ -d "${HOME}/.bun/bin" ]; then
-        case ":$PATH:" in
-            *":${HOME}/.bun/bin:"*)
-                ln -sf "${TARGET_BIN}" "${HOME}/.bun/bin/netra" 2>/dev/null || true
-                ;;
-        esac
-    fi
+fi
+
+# If ~/.bun/bin exists and is in PATH, link it for instant access in current shell
+if [ -d "${HOME}/.bun/bin" ]; then
+    case ":$PATH:" in
+        *":${HOME}/.bun/bin:"*)
+            ln -sf "${TARGET_BIN}" "${HOME}/.bun/bin/netra" 2>/dev/null || true
+            ;;
+    esac
 fi
 
 # 6. Friendly Completion Banner

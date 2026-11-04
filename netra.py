@@ -1310,8 +1310,6 @@ def generate_host_issue_content(diff: dict) -> tuple[str, str]:
     return title, "\n".join(body_lines)
 
 
-def run_host_top_dashboard(interval: float = 3.0) -> int:
-    """Launch interactive btop-style curses terminal monitoring dashboard for local host."""
 def curses_host_main(stdscr, interval: float = 3.0, max_frames: int | None = None) -> int:
     """Interactive btop-style curses loop for local host radar monitoring."""
     try:

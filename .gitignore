@@ -9,3 +9,14 @@ build/
 dist/
 .netra/
 
+# Environment secrets & credentials
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.cert
+*.crt
+credentials.db
+auth.json
+

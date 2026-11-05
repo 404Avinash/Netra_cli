@@ -2184,8 +2184,6 @@ def load_baseline(filepath: Path) -> dict:
             Path.home() / ".netra" / "baselines" / filepath.name,
             script_dir / "baselines" / filepath.name,
             script_dir / ".netra" / "baselines" / filepath.name,
-            Path("/home/avi/Downloads/Swytchcode_ppi_task/baselines") / filepath.name,
-            Path("/home/avi/Downloads/Swytchcode_ppi_task/.netra/baselines") / filepath.name,
         ]
         for cand in candidates:
             if cand.exists():
